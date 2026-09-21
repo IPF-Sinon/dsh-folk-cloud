@@ -1,0 +1,66 @@
+# 手动发布：跑与 ci.yml 相同的阶梯，然后把 tgz 挂到一个**正式** release（非 pre-release）。
+#
+# 与 pack-prerelease.yml 的区别只有一处：这里创建的 release 不带 --prerelease，且默认 --latest。
+# DSH-Folk 预装用 `github:IPF-Sinon/dsh-folk-cloud` 跟最新代码；这个正式 tgz 是「git 全线路
+# 都失败时」App 的兜底安装目标（钉死版本），所以要一个稳定、可直链下载的正式附件。
+name: Release tarball
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create/attach (e.g. v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package tarball
+        run: mkdir -p dist && npm pack --pack-destination ./dist
+
+      - name: Attach tarball to a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TGZ=$(ls dist/*.tgz | head -1)
+          echo "tarball: $TGZ"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease=false --latest
+          else
+            gh release create "$TAG" --latest \
+              --title "$TAG" --notes "dsh-folk-cloud $TAG (stable tarball for DSH-Folk seed fallback)."
+          fi
+          gh release upload "$TAG" "$TGZ" --clobber
+          gh release view "$TAG" --json assets,isLatest,isPrerelease --jq '{isLatest, isPrerelease, assets: [.assets[].url]}'

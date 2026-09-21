@@ -1,0 +1,70 @@
+# CI：typecheck → test → build → pack。零发布副作用。
+#
+# 与 pack-prerelease.yml 的分工：
+#  - ci.yml（本文件）：PR / main push / 手动 —— 只校验，不申请仓库写权限、不碰任何 registry；
+#  - pack-prerelease.yml：手动触发，跑同一套阶梯后把 tgz 挂到 pre-release，供真机实测。
+#
+# 安装契约（照抄 dsh-config-manager 验过的口径）：`npm ci --legacy-peer-deps`。
+# 部分 @deepseek-ai/* 只在 peerDependencies 里，且早期 rc 版本在公共 registry 上未必齐，
+# 不带 --legacy-peer-deps 的普通 npm ci 会因 peer 解析失败直接红灯。
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 最小权限：本流水线只读代码。
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # 构建会同时产出宿主半（tsc → lib/*.js，ESM）与浏览器半（tsdown → lib/client.js，
+      # 带 window.__ModuleLoader__ 包装）。两步都必须在 CI 里跑：打包形态错了只有
+      # 在真机装载时才会暴露，而那时排查成本高得多。
+      - name: Build
+        run: npm run build
+
+      # 打包形态自检：loader id 必须等于包名，否则 dsh web 装载不到这个模块；
+      # cordis.patch.yml 必须进包，否则 `dsh plugin add` 只当它是普通依赖（不生效）。
+      - name: Verify bundle shape
+        run: |
+          set -euo pipefail
+          PKG=$(node -p "require('./package.json').name")
+          test -f lib/client.js || { echo "::error::lib/client.js 未产出"; exit 1; }
+          grep -q "id: \"$PKG\"" lib/client.js || { echo "::error::lib/client.js 的 loader id 与包名不一致"; exit 1; }
+          grep -q '__ModuleLoader__.load' lib/client.js || { echo "::error::lib/client.js 缺 __ModuleLoader__ 包装"; exit 1; }
+          test -f cordis.patch.yml || { echo "::error::缺 cordis.patch.yml（dsh 不会把它当 bundle 装载）"; exit 1; }
+          ROW=$(grep -oE '^\s*- id: \S+' cordis.patch.yml | head -1 | awk '{print $3}')
+          HOST=$(grep -oE "export const name = '[^']+'" src/index.ts | head -1 | sed -E "s/.*'([^']+)'.*/\1/")
+          test "$ROW" = "$HOST" || { echo "::error::cordis.patch.yml 的 row id ($ROW) 与 export const name ($HOST) 不一致"; exit 1; }
+
+      - name: Pack (dry run)
+        run: npm pack --dry-run

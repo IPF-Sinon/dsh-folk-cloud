@@ -1,0 +1,64 @@
+# 手动打包：跑与 ci.yml 相同的阶梯，然后把 tgz 挂到一个 pre-release 上。
+#
+# 为什么不并进 ci.yml：ci.yml 的设计是「零发布副作用、只读代码」，给它加
+# contents: write 会破坏这个不变量。这条流水线只做「构建 + 挂附件」，绝不 push 到任何
+# registry —— DSH-Folk 预装用的是 `github:IPF-Sinon/dsh-folk-cloud` 规格（pnpm 直接装仓库），
+# 本步骤产出的 tgz 是给真机手动安装/核查用的。
+name: Pack test tarball (pre-release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attach the tarball to (e.g. v0.1.0-test.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pack-prerelease
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package tarball
+        run: mkdir -p dist && npm pack --pack-destination ./dist
+
+      - name: Attach tarball to a pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TGZ=$(ls dist/*.tgz | head -1)
+          echo "tarball: $TGZ"
+          # 已存在就先删掉旧附件，保证同一个 tag 反复跑时拿到的总是最新构建
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --prerelease \
+            --title "$TAG" --notes "dsh-folk-cloud test build (not published to any registry)."
+          gh release upload "$TAG" "$TGZ" --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].url'

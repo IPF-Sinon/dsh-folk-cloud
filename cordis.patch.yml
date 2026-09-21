@@ -1,0 +1,32 @@
+# dsh-folk-cloud bundle patch: inserts the dual-face plugin row into the web
+# profile roster. Applied as a profile bundle layer (the `dsh.bundle.patch`
+# manifest field in package.json) over dsh-base; activate with
+#   dsh plugin --profile web add github:IPF-Sinon/dsh-folk-cloud
+#   dsh plugin --profile web add link:<abs-or-~-path>            # local dev
+#
+# Why this file exists at all: `dsh plugin add` appends a package to the target
+# profile's `dsh.profile.bundles` ONLY when that package's manifest carries
+# `dsh.bundle.patch` (package.json does, pointing here). Without it the CLI
+# treats the package as a plain dependency, warns, and dsh never loads it — the
+# package just sits on disk. This mirrors dsh-config-manager/cordis.patch.yml.
+#
+# Row id MUST match the Host plugin's `export const name` in src/index.ts
+# ("folk-cloud"), otherwise the loader reports a duplicate/missing entry.
+#
+# Two faces, same as dsh-ssh / dsh-config-manager:
+#  - node half (exports ".") runs in the host process: WebDAV transport, sync
+#    engine, /api/dsh-folk-cloud routes, scheduled triggers;
+#  - browser half (exports "./client", declared via `dsh.client` in
+#    package.json) renders the settings page inside the dsh web GUI.
+#
+# Host services consumed (declared via `inject` in src/index.ts, each also a
+# peerDependency in package.json):
+#   ctx.settings     -> @deepseek-ai/dsh-settings       (settings namespace)
+#   ctx.credentials  -> @deepseek-ai/dsh-credentials    (WebDAV password, never on disk)
+#   ctx.webServer    -> @deepseek-ai/dsh-host-webserver (the /api/dsh-folk-cloud routes)
+# Deliberately NOT injected: ctx.llm / ctx.tools / conversation lifecycle — this
+# plugin has no conversation-round trigger (the DSH plugin surface exposes no
+# turn/message event), so its triggers are timer, DSH startup and manual only.
+- insert:
+    - id: folk-cloud
+      name: 'dsh-folk-cloud'

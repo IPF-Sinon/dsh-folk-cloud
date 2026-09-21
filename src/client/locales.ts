@@ -1,0 +1,136 @@
+/**
+ * 云备份设置页的文案（zh 主源 / en 镜像）。
+ *
+ * 键名分类前缀：`section.` 页面级、`field.` 表单字段、`tier.` 备份档位、
+ * `action.` 按钮、`state.` 状态与结果。新增键必须两份都加（type 会强制）。
+ */
+export const zh = {
+  'section.label': '云备份',
+  'section.desc': '把完整备份同步到 WebDAV：定时/启动后/手动触发，按内容哈希去重，冲突时停下来问你。',
+
+  'field.url': 'WebDAV 地址',
+  'field.url.hint': '例如 https://dav.example.com/dav',
+  'field.username': '用户名',
+  'field.password': '密码',
+  'field.password.keep': '留空 = 保持已保存的密码',
+  'field.remoteDir': '远端子目录',
+  'field.remoteDir.hint': '默认 dsh-folk（与配置管理器的 dsh-config-manager/ 并列）',
+
+  'tier.label': '备份档位',
+  'tier.dsh-only': '仅 DSH 数据',
+  'tier.dsh-only.desc': '配置、插件清单、MCP、技能、工作区等。不含凭据原文。',
+  'tier.dsh-vault': '仅 DSH 数据（含 vault）',
+  'tier.dsh-vault.desc': '上面那些 + 凭据原文。必须加密。',
+  'tier.app-only': '仅软件数据',
+  'tier.app-only.desc': 'App 设置与外观（背景/字体/音乐/音效）。可能不含 DSH 数据。',
+  'tier.app-dsh': '软件数据 + DSH 数据',
+  'tier.app-dsh.desc': '两边都带。这是 App 里「备份」的默认档位。',
+  'tier.app-dsh-vault': '软件数据 + DSH 数据（含 vault）',
+  'tier.app-dsh-vault.desc': '最全的一档，含凭据原文。必须加密。',
+
+  'field.sessions': '包含会话记录',
+  'field.sessions.desc': '对话历史会显著增大包体积，默认不含。',
+  'field.encrypt': '加密备份包',
+  'field.encrypt.desc': '含 vault 的档位必须开启；口令在「立即执行」时填写。',
+
+  'trigger.label': '触发方式',
+  'trigger.interval': '定时间隔（分钟）',
+  'trigger.interval.hint': '0 = 关闭定时触发',
+  'trigger.startup': 'DSH 启动后自动同步一次',
+  'trigger.manual': '允许手动触发（始终可用）',
+
+  'action.save': '保存',
+  'action.test': '测试连接',
+  'action.syncNow': '立即同步',
+  'action.push': '只上传',
+  'action.pull': '只从上游恢复',
+  'action.forget': '忘记上游锚点',
+  'action.keepLocal': '用本机覆盖上游',
+  'action.keepRemote': '用上游覆盖本机',
+
+  'state.loading': '读取中…',
+  'state.saved': '已保存。',
+  'state.testOk': '连接正常。',
+  'state.passwordSet': '已配置',
+  'state.passwordUnset': '未配置',
+  'state.neverSynced': '从未同步',
+  'state.lastSync': '上次同步',
+  'state.appBridgeOk': '宿主 App 软件数据接口：可用',
+  'state.appBridgeMissing': '宿主 App 软件数据接口：不可用（含软件数据的档位会自动回退）',
+  'state.managerMissing': '未检测到 dsh-config-manager：DSH 数据无法备份/恢复，请先安装并启用它。',
+  'state.tierFallback': '当前档位会回退为：%s',
+  'state.running': '同步进行中…',
+  'state.history': '提交历史（本机记录）',
+  'state.history.empty': '还没有提交记录。',
+  'state.conflict.title': '上游与本机都有改动',
+  'state.conflict.desc': '为避免覆盖你的数据，这里不会自动合并：请选择保留哪一边。',
+
+  'log.title': '最近一次运行的日志',
+} as const;
+
+export const en: Record<CloudKey, string> = {
+  'section.label': 'Cloud backup',
+  'section.desc':
+    'Sync a full backup to WebDAV: timer, on DSH startup, or manual. Hash-based dedup, and conflicts stop and ask you.',
+
+  'field.url': 'WebDAV URL',
+  'field.url.hint': 'e.g. https://dav.example.com/dav',
+  'field.username': 'Username',
+  'field.password': 'Password',
+  'field.password.keep': 'Leave empty to keep the saved password',
+  'field.remoteDir': 'Remote subdirectory',
+  'field.remoteDir.hint': 'Defaults to dsh-folk (sits beside the config manager’s dsh-config-manager/)',
+
+  'tier.label': 'Backup tier',
+  'tier.dsh-only': 'DSH data only',
+  'tier.dsh-only.desc': 'Settings, plugin list, MCP, skills, workspaces, etc. No credential values.',
+  'tier.dsh-vault': 'DSH data only (with vault)',
+  'tier.dsh-vault.desc': 'The above plus credential values. Encryption is required.',
+  'tier.app-only': 'App data only',
+  'tier.app-only.desc': 'App settings and appearance (background, font, music, sound). May exclude DSH data.',
+  'tier.app-dsh': 'App data + DSH data',
+  'tier.app-dsh.desc': 'Both sides. This is the default tier in the app’s backup screen.',
+  'tier.app-dsh-vault': 'App data + DSH data (with vault)',
+  'tier.app-dsh-vault.desc': 'The most complete tier, including credential values. Encryption is required.',
+
+  'field.sessions': 'Include conversation sessions',
+  'field.sessions.desc': 'Session history makes the archive much larger; excluded by default.',
+  'field.encrypt': 'Encrypt the archive',
+  'field.encrypt.desc': 'Required for vault tiers; the password is entered when you sync now.',
+
+  'trigger.label': 'Triggers',
+  'trigger.interval': 'Timer interval (minutes)',
+  'trigger.interval.hint': '0 disables the timer',
+  'trigger.startup': 'Sync once after DSH starts',
+  'trigger.manual': 'Allow manual triggering (always available)',
+
+  'action.save': 'Save',
+  'action.test': 'Test connection',
+  'action.syncNow': 'Sync now',
+  'action.push': 'Upload only',
+  'action.pull': 'Restore from upstream',
+  'action.forget': 'Forget upstream anchor',
+  'action.keepLocal': 'Keep local, overwrite upstream',
+  'action.keepRemote': 'Take upstream, overwrite local',
+
+  'state.loading': 'Loading…',
+  'state.saved': 'Saved.',
+  'state.testOk': 'Connection OK.',
+  'state.passwordSet': 'configured',
+  'state.passwordUnset': 'not configured',
+  'state.neverSynced': 'never synced',
+  'state.lastSync': 'Last sync',
+  'state.appBridgeOk': 'Host app data interface: available',
+  'state.appBridgeMissing': 'Host app data interface: unavailable (app-data tiers will fall back automatically)',
+  'state.managerMissing': 'dsh-config-manager not detected: DSH data cannot be backed up or restored. Install and enable it first.',
+  'state.tierFallback': 'Current tier will fall back to: %s',
+  'state.running': 'A sync is running…',
+  'state.history': 'Commit history (local record)',
+  'state.history.empty': 'No commits yet.',
+  'state.conflict.title': 'Both upstream and this device changed',
+  'state.conflict.desc': 'Nothing is merged automatically — choose which side to keep.',
+
+  'log.title': 'Last run log',
+};
+
+export type CloudKey = keyof typeof zh;

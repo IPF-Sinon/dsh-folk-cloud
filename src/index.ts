@@ -404,26 +404,25 @@ export function apply(ctx: Context, config?: { dataDir?: string }): void {
     }
   })();
 
-  const webServer = readService<WebServer>(ctx, 'webServer');
-  if (webServer === undefined) {
-    ctx.logger?.warn?.('[folk-cloud] webServer 不可用：跳过 /api/dsh-folk-cloud 路由注册');
-    return;
-  }
-  const routes = makeRoutes(runtime);
-  const disposers = routes.map((route) => webServer.register(route));
-  ctx.effect(
-    () => () => {
-      for (const dispose of disposers) dispose();
-    },
-    'folk-cloud: routes',
-  );
-}
-
-/** 取一个可选服务（服务不存在时返回 undefined，而不是抛错）。 */
-function readService<T>(ctx: Context, name: string): T | undefined {
-  const services = ctx as unknown as Record<string, unknown>;
-  const value = services[name];
-  return value === undefined || value === null ? undefined : (value as T);
+  // webServer 用 ctx.inject 的作用域注入，而不是直接读 ctx.webServer。
+  //
+  // 原因：cordis 的 Context 是代理，直接访问一个「未 inject 且此刻不在 store 里」的服务名会
+  // **抛** `cannot get property "webServer" without inject`（不是返回 undefined）。webServer 由
+  // 另一个插件注册，插件加载次序不保证它先于本插件就绪——直接读就可能在启动时炸掉整棵插件树
+  // （真机 dsh web --port 0 验证即如此）。ctx.inject([...], cb) 会等这些服务到位才跑 cb、服务
+  // 消失时自动 dispose；webServer 一直没有（非 web 部署）则 cb 不跑，路由跳过——正好是我们要的
+  // 「可选」语义，且不再有时序竞态。
+  ctx.inject(['webServer'], (ctx) => {
+    const webServer = (ctx as unknown as { webServer: WebServer }).webServer;
+    const routes = makeRoutes(runtime);
+    const disposers = routes.map((route) => webServer.register(route));
+    ctx.effect(
+      () => () => {
+        for (const dispose of disposers) dispose();
+      },
+      'folk-cloud: routes',
+    );
+  });
 }
 
 /** 全部路由。守卫口径：回环 + 同源（口令与备份都从这里过，不能对局域网开放）。 */

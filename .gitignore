@@ -1,4 +1,6 @@
 node_modules/
-lib/
+# lib/ 现在入库：github: 安装（跟最新）拿不到构建步骤，必须带上预构建产物。
+# 只忽略 sourcemap（运行时用不到），.js/.d.ts 提交。CI 有漂移守卫保证与 src 同步。
+lib/**/*.map
 dist/
 *.tgz

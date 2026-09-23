@@ -3,6 +3,8 @@ import { Buffer } from 'node:buffer';
 export declare const DEFAULT_TIMEOUT_MS = 120000;
 /** 重定向最大跳数（防 302 循环拖死请求）。 */
 export declare const MAX_REDIRECTS = 5;
+/** 限流退避：最大重试次数与每次等待上限（自建 WebDAV 如 OpenList、坚果云都可能返回 429）。 */
+export declare const MAX_RETRIES = 4;
 /** 口令提供者：口令只在请求发出的一瞬间被读出来用，不缓存、不入配置。 */
 export interface WebdavCredentialProvider {
     getPassword(): Promise<string>;

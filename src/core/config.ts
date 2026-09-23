@@ -31,6 +31,15 @@ export const MAX_COMMITS = 100;
 /** WebDAV 口令的 DSH credentials 引用名（POSIX 环境变量形态，满足 CredentialRef 品牌要求）。 */
 export const WEBDAV_CREDENTIAL_REF = 'DSH_FOLK_CLOUD_WEBDAV_PASSWORD';
 
+/**
+ * 备份**加密口令**的 DSH credentials 引用名（与 WebDAV 口令分开存一份）。
+ *
+ * 与 WebDAV 口令同一条铁律：永不落盘、永不入日志、界面永不回读。持久化它是为了让**自动**
+ * 触发（定时 / 启动后）也能加密——否则 `encrypt:true` 只能靠手动触发临时传口令，自动触发
+ * 会拿不到口令而静默产出明文包（本插件已改为此时明确报错，不再静默）。
+ */
+export const ENCRYPT_CREDENTIAL_REF = 'DSH_FOLK_CLOUD_ENCRYPT_PASSWORD';
+
 /** 配置 schema 版本；读到更旧的版本时用默认值补齐（不猜测，缺什么用什么）。 */
 export const CONFIG_SCHEMA_VERSION = 1;
 
@@ -116,8 +125,10 @@ export interface CloudConfig {
   tier: BackupTier;
   /** 导出时是否带上会话分区（会显著变大）。 */
   includeSessions: boolean;
-  /** 加密口令（导出时用；仅内存，不落盘）。 */
+  /** 是否加密导出包。 */
   encrypt: boolean;
+  /** 本次是否提供了新的**加密口令**；`undefined` = 保持已存的不变。**永不来自文件读取**。 */
+  encryptPassword?: string;
   trigger: TriggerConfig;
 }
 
@@ -240,6 +251,8 @@ export function mergeConfig(raw: Record<string, unknown>, base: CloudConfig): Cl
   }
 
   const password = typeof raw['password'] === 'string' && raw['password'] !== '' ? raw['password'] : undefined;
+  const encryptPassword =
+    typeof raw['encryptPassword'] === 'string' && raw['encryptPassword'] !== '' ? raw['encryptPassword'] : undefined;
 
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
@@ -250,13 +263,14 @@ export function mergeConfig(raw: Record<string, unknown>, base: CloudConfig): Cl
     tier: isTier(tierRaw) ? tierRaw : base.tier,
     includeSessions,
     encrypt,
+    ...(encryptPassword === undefined ? {} : { encryptPassword }),
     trigger,
   };
 }
 
-/** 落盘前剥掉内存态字段（`password` 绝不能进文件）。 */
-export function configForDisk(cfg: CloudConfig): Omit<CloudConfig, 'password'> {
-  const { password: _discard, ...rest } = cfg;
+/** 落盘前剥掉内存态字段（`password` / `encryptPassword` 绝不能进文件）。 */
+export function configForDisk(cfg: CloudConfig): Omit<CloudConfig, 'password' | 'encryptPassword'> {
+  const { password: _pw, encryptPassword: _epw, ...rest } = cfg;
   return rest;
 }
 

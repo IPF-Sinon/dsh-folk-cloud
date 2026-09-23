@@ -6,6 +6,14 @@ export declare const HISTORY_FILE = "cloud-history.json";
 export declare const MAX_COMMITS = 100;
 /** WebDAV 口令的 DSH credentials 引用名（POSIX 环境变量形态，满足 CredentialRef 品牌要求）。 */
 export declare const WEBDAV_CREDENTIAL_REF = "DSH_FOLK_CLOUD_WEBDAV_PASSWORD";
+/**
+ * 备份**加密口令**的 DSH credentials 引用名（与 WebDAV 口令分开存一份）。
+ *
+ * 与 WebDAV 口令同一条铁律：永不落盘、永不入日志、界面永不回读。持久化它是为了让**自动**
+ * 触发（定时 / 启动后）也能加密——否则 `encrypt:true` 只能靠手动触发临时传口令，自动触发
+ * 会拿不到口令而静默产出明文包（本插件已改为此时明确报错，不再静默）。
+ */
+export declare const ENCRYPT_CREDENTIAL_REF = "DSH_FOLK_CLOUD_ENCRYPT_PASSWORD";
 /** 配置 schema 版本；读到更旧的版本时用默认值补齐（不猜测，缺什么用什么）。 */
 export declare const CONFIG_SCHEMA_VERSION = 1;
 /**
@@ -58,8 +66,10 @@ export interface CloudConfig {
     tier: BackupTier;
     /** 导出时是否带上会话分区（会显著变大）。 */
     includeSessions: boolean;
-    /** 加密口令（导出时用；仅内存，不落盘）。 */
+    /** 是否加密导出包。 */
     encrypt: boolean;
+    /** 本次是否提供了新的**加密口令**；`undefined` = 保持已存的不变。**永不来自文件读取**。 */
+    encryptPassword?: string;
     trigger: TriggerConfig;
 }
 export declare const DEFAULT_CONFIG: CloudConfig;
@@ -110,8 +120,8 @@ export declare function normalizeRemoteDir(dir: string): string;
  * [password] 缺席 = 不改已存口令；传入空串与传 undefined 同义（空串无法与「不改」区分）。
  */
 export declare function mergeConfig(raw: Record<string, unknown>, base: CloudConfig): CloudConfig;
-/** 落盘前剥掉内存态字段（`password` 绝不能进文件）。 */
-export declare function configForDisk(cfg: CloudConfig): Omit<CloudConfig, 'password'>;
+/** 落盘前剥掉内存态字段（`password` / `encryptPassword` 绝不能进文件）。 */
+export declare function configForDisk(cfg: CloudConfig): Omit<CloudConfig, 'password' | 'encryptPassword'>;
 export declare function readConfig(dir: string): Promise<CloudConfig | null>;
 export declare function writeConfig(dir: string, cfg: CloudConfig): Promise<void>;
 export declare function readState(dir: string): Promise<CloudState>;

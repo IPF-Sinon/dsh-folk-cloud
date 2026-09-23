@@ -34,6 +34,7 @@ import {
   CLOUD_DIR_NAME,
   DEFAULT_CONFIG,
   WEBDAV_CREDENTIAL_REF,
+  ENCRYPT_CREDENTIAL_REF,
   configForDisk,
   mergeConfig,
   readConfig,
@@ -78,6 +79,7 @@ const MIN_INTERVAL_MINUTES = 1;
 
 /** 凭据引用的品牌化。 */
 const WEBDAV_REF = credentialRef(WEBDAV_CREDENTIAL_REF);
+const ENCRYPT_REF = credentialRef(ENCRYPT_CREDENTIAL_REF);
 
 /** 一次同步的运行状态（供 /status 与 /trigger 轮询）。 */
 interface RunState {
@@ -119,8 +121,6 @@ class CloudRuntime {
   private running = false;
   private run: RunState = { running: false, startedAt: '', finishedAt: '', lastReport: null };
   private timer: ReturnType<typeof setInterval> | undefined;
-  /** 界面最近一次「立即执行」的密码（仅内存，绝不落盘）。 */
-  private password = '';
 
   private readonly credentials: CredentialProvider;
   private readonly log: (line: string) => void;
@@ -172,23 +172,57 @@ class CloudRuntime {
       // 「密码留空 = 保持原密码」由 mergeConfig 保证：空串不会走到这里
       await this.credentials.set(WEBDAV_REF, merged.password);
     }
+    if (merged.encryptPassword !== undefined) {
+      // 加密口令同理：空串不会走到这里（留空 = 不改已存的）
+      await this.credentials.set(ENCRYPT_REF, merged.encryptPassword);
+    }
     await writeConfig(this.dataDir, merged);
     this.reschedule(merged);
     return merged;
   }
 
-  /** 口令是否已配置（只回布尔，永不回值）。 */
+  /** WebDAV 口令是否已配置（只回布尔，永不回值）。 */
   async passwordConfigured(): Promise<boolean> {
     const info = await this.credentials.describe(WEBDAV_REF);
     return info.configured;
+  }
+
+  /** 备份加密口令是否已配置（只回布尔，永不回值）。 */
+  async encryptPasswordConfigured(): Promise<boolean> {
+    const info = await this.credentials.describe(ENCRYPT_REF);
+    return info.configured;
+  }
+
+  /** 已存的加密口令（读不到回空串）。仅供触发时内部取用，绝不外泄。 */
+  private async storedEncryptPassword(): Promise<string> {
+    const resolved = await this.credentials.resolve(ENCRYPT_REF);
+    return resolved?.value ?? '';
+  }
+
+  /**
+   * 解析本轮要用的加密口令。
+   *
+   * 次序：界面本次显式传入的 [override] 优先（手动执行时可临时覆盖），否则用已存的加密口令。
+   * 若该档位**要求加密**（[CloudConfig.encrypt] 或含 vault）却拿不到任何口令，则抛错——
+   * 宁可明确失败，也绝不静默产出明文包（这正是自动触发以前的隐患）。
+   */
+  private async resolveEncryptPassword(cfg: CloudConfig, override?: string): Promise<string> {
+    const explicit = override !== undefined && override !== '' ? override : '';
+    const pw = explicit !== '' ? explicit : await this.storedEncryptPassword();
+    const mustEncrypt = cfg.encrypt || tierHasVault(cfg.tier);
+    if (mustEncrypt && pw === '') {
+      throw new WebdavError('已开启加密但未设置备份加密口令：请先在「配置 WebDAV」里填写加密口令，或关闭加密。');
+    }
+    return pw;
   }
 
   /** 配置状态视图：给界面回填用，绝不含口令值。 */
   async status(): Promise<Record<string, unknown>> {
     const cfg = await this.config();
     const state = await this.state();
-    const [passwordConfigured, appAvailable, managerAvailable] = await Promise.all([
+    const [passwordConfigured, encryptPasswordConfigured, appAvailable, managerAvailable] = await Promise.all([
       this.passwordConfigured(),
+      this.encryptPasswordConfigured(),
       appBridgeAvailable(),
       configManagerAvailable(),
     ]);
@@ -200,6 +234,7 @@ class CloudRuntime {
       url: cfg.url,
       username: cfg.username,
       passwordConfigured,
+      encryptPasswordConfigured,
       remoteDir: cfg.remoteDir,
       tier: cfg.tier,
       effectiveTier,
@@ -218,7 +253,6 @@ class CloudRuntime {
 
   /** 触发一轮同步。`mode` = auto / push / pull。 */
   async trigger(mode: 'auto' | 'push' | 'pull', password?: string): Promise<SyncReport> {
-    if (password !== undefined && password !== '') this.password = password;
     if (this.running) {
       return {
         outcome: 'error',
@@ -236,6 +270,8 @@ class CloudRuntime {
     try {
       const cfg = await this.config();
       const state = await this.state();
+      // 加密口令：本次显式传入优先，否则用已存的；要加密却没口令则明确报错（不静默出明文包）。
+      const encryptPw = await this.resolveEncryptPassword(cfg, password);
       const transport = await this.transport(cfg);
       const result = await runSync({
         transport,
@@ -245,9 +281,7 @@ class CloudRuntime {
         state,
         workDir: this.dataDir,
         mode,
-        // 加密口令：界面「立即执行」时提供；自动触发时用已保存的（我们目前不存口令，
-        // 所以自动触发遇到加密档位会得到一个明确报错，而不是静默出明文包）
-        ...(this.password === '' ? {} : { password: this.password }),
+        ...(encryptPw === '' ? {} : { password: encryptPw }),
         onLine: (line) => this.log(line),
       });
       await writeState(this.dataDir, result.state);
@@ -279,12 +313,12 @@ class CloudRuntime {
 
   /** 冲突裁决：`keep` = local 用本机覆盖上游，remote 用上游覆盖本机。 */
   async resolve(keep: 'local' | 'remote', password?: string): Promise<SyncReport> {
-    if (password !== undefined && password !== '') this.password = password;
     this.running = true;
     this.run = { running: true, startedAt: new Date().toISOString(), finishedAt: '', lastReport: null };
     try {
       const cfg = await this.config();
       const state = await this.state();
+      const encryptPw = await this.resolveEncryptPassword(cfg, password);
       const transport = await this.transport(cfg);
       const result = await resolveConflict({
         transport,
@@ -294,7 +328,7 @@ class CloudRuntime {
         state,
         workDir: this.dataDir,
         keep,
-        ...(this.password === '' ? {} : { password: this.password }),
+        ...(encryptPw === '' ? {} : { password: encryptPw }),
         onLine: (line) => this.log(line),
       });
       await writeState(this.dataDir, result.state);
@@ -475,6 +509,7 @@ export function makeRoutes(runtime: CloudRuntime): WebRoute[] {
             encrypt: saved.encrypt,
             trigger: saved.trigger,
             passwordConfigured: await runtime.passwordConfigured(),
+            encryptPasswordConfigured: await runtime.encryptPasswordConfigured(),
           });
         } catch (error) {
           writeJson(res, error instanceof WebdavError ? 400 : 500, { error: describe(error) });

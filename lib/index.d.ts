@@ -29,8 +29,6 @@ declare class CloudRuntime {
     private running;
     private run;
     private timer;
-    /** 界面最近一次「立即执行」的密码（仅内存，绝不落盘）。 */
-    private password;
     private readonly credentials;
     private readonly log;
     constructor(credentials: CredentialProvider, log: (line: string) => void);
@@ -42,8 +40,20 @@ declare class CloudRuntime {
     get runState(): RunState;
     /** 保存配置：校验地址、写口令到凭据、落盘（口令不进文件）。 */
     saveConfig(raw: Record<string, unknown>): Promise<CloudConfig>;
-    /** 口令是否已配置（只回布尔，永不回值）。 */
+    /** WebDAV 口令是否已配置（只回布尔，永不回值）。 */
     passwordConfigured(): Promise<boolean>;
+    /** 备份加密口令是否已配置（只回布尔，永不回值）。 */
+    encryptPasswordConfigured(): Promise<boolean>;
+    /** 已存的加密口令（读不到回空串）。仅供触发时内部取用，绝不外泄。 */
+    private storedEncryptPassword;
+    /**
+     * 解析本轮要用的加密口令。
+     *
+     * 次序：界面本次显式传入的 [override] 优先（手动执行时可临时覆盖），否则用已存的加密口令。
+     * 若该档位**要求加密**（[CloudConfig.encrypt] 或含 vault）却拿不到任何口令，则抛错——
+     * 宁可明确失败，也绝不静默产出明文包（这正是自动触发以前的隐患）。
+     */
+    private resolveEncryptPassword;
     /** 配置状态视图：给界面回填用，绝不含口令值。 */
     status(): Promise<Record<string, unknown>>;
     /** 触发一轮同步。`mode` = auto / push / pull。 */

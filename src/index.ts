@@ -54,7 +54,7 @@ import {
   appBridgeAvailable,
   configManagerAvailable,
 } from './core/host-bridge.ts';
-import { resolveConflict, runSync, type SyncReport } from './core/sync-engine.ts';
+import { resolveConflict, restoreCommit, runSync, type SyncReport } from './core/sync-engine.ts';
 import { readRemoteManifest } from './core/store.ts';
 import { WebdavError, WebdavTransport } from './webdav/transport.ts';
 
@@ -71,6 +71,7 @@ const API = {
   test: '/api/dsh-folk-cloud/test',
   trigger: '/api/dsh-folk-cloud/trigger',
   resolve: '/api/dsh-folk-cloud/resolve',
+  restore: '/api/dsh-folk-cloud/restore',
   forget: '/api/dsh-folk-cloud/forget',
 } as const;
 
@@ -344,6 +345,65 @@ class CloudRuntime {
     }
   }
 
+  /** 恢复一个指定的历史版本（用上游那一版覆盖本机，锚点对齐到这一版）。 */
+  async restoreCommit(hash: string, password?: string): Promise<SyncReport> {
+    if (this.running) {
+      return {
+        outcome: 'error',
+        message: '已经有一轮同步在跑，请稍后再试。',
+        localHash: '',
+        remoteHash: '',
+        file: '',
+        tierFellBackTo: '',
+        conflict: null,
+        lines: [],
+      };
+    }
+    this.running = true;
+    this.run = { running: true, startedAt: new Date().toISOString(), finishedAt: '', lastReport: null };
+    try {
+      const cfg = await this.config();
+      const state = await this.state();
+      const encryptPw = await this.resolveEncryptPassword(cfg, password);
+      const transport = await this.transport(cfg);
+      const result = await restoreCommit({
+        transport,
+        producer: new HostBackupProducer(),
+        restorer: new HostBackupRestorer(),
+        config: cfg,
+        state,
+        workDir: this.dataDir,
+        targetHash: hash,
+        ...(encryptPw === '' ? {} : { password: encryptPw }),
+        onLine: (line) => this.log(line),
+      });
+      await writeState(this.dataDir, result.state);
+      this.run = {
+        running: false,
+        startedAt: this.run.startedAt,
+        finishedAt: new Date().toISOString(),
+        lastReport: result.report,
+      };
+      return result.report;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const report: SyncReport = {
+        outcome: 'error',
+        message,
+        localHash: '',
+        remoteHash: '',
+        file: '',
+        tierFellBackTo: '',
+        conflict: null,
+        lines: [message],
+      };
+      this.run = { running: false, startedAt: this.run.startedAt, finishedAt: new Date().toISOString(), lastReport: report };
+      return report;
+    } finally {
+      this.running = false;
+    }
+  }
+
   /** 列出上游提交（只读，不写任何东西）。 */
   async remoteCommits(): Promise<{ ok: boolean; manifest: unknown; error?: string }> {
     try {
@@ -564,6 +624,21 @@ export function makeRoutes(runtime: CloudRuntime): WebRoute[] {
         }
         const password = typeof body?.['password'] === 'string' ? body['password'] : undefined;
         writeJson(res, 200, await runtime.resolve(keepRaw, password));
+      },
+    },
+    {
+      kind: 'exact',
+      path: API.restore,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return;
+        const body = await readJsonBody(req);
+        const hash = typeof body?.['hash'] === 'string' ? body['hash'] : '';
+        if (hash === '') {
+          writeJson(res, 400, { error: 'hash 不能为空' });
+          return;
+        }
+        const password = typeof body?.['password'] === 'string' ? body['password'] : undefined;
+        writeJson(res, 200, await runtime.restoreCommit(hash, password));
       },
     },
     {

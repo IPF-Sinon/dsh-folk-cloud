@@ -60,6 +60,8 @@ declare class CloudRuntime {
     trigger(mode: 'auto' | 'push' | 'pull', password?: string): Promise<SyncReport>;
     /** 冲突裁决：`keep` = local 用本机覆盖上游，remote 用上游覆盖本机。 */
     resolve(keep: 'local' | 'remote', password?: string): Promise<SyncReport>;
+    /** 恢复一个指定的历史版本（用上游那一版覆盖本机，锚点对齐到这一版）。 */
+    restoreCommit(hash: string, password?: string): Promise<SyncReport>;
     /** 列出上游提交（只读，不写任何东西）。 */
     remoteCommits(): Promise<{
         ok: boolean;

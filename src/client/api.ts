@@ -137,6 +137,17 @@ export class CloudApi {
     );
   }
 
+  /** 恢复一个指定的历史版本（用那一版覆盖本机，锚点对齐到这一版）。 */
+  async restore(hash: string, password?: string): Promise<SyncReport> {
+    return readJson<SyncReport>(
+      await fetch('/api/dsh-folk-cloud/restore', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hash, ...(password === undefined ? {} : { password }) }),
+      }),
+    );
+  }
+
   /** 忘记上游锚点（不删远端任何东西）。 */
   async forget(): Promise<void> {
     await readJson<{ ok: boolean }>(await fetch('/api/dsh-folk-cloud/forget', { method: 'POST' }));

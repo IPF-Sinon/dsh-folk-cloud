@@ -85,6 +85,15 @@ export interface SyncResult {
 }
 /** 跑一轮同步。所有外部副作用都经注入的接口发生，因此本函数可在 Node 里完整测试。 */
 export declare function runSync(deps: SyncDeps): Promise<SyncResult>;
+/**
+ * 恢复一个**指定的历史提交**（不一定是 head）。用户在历史列表里点某一版「恢复」时走这里。
+ *
+ * 与 doPull 完全同一套下载 → 校验 → 恢复流程，只是目标提交由 [targetHash] 指定；恢复成功后
+ * 本机锚点对齐到这一版（等同「用这一版覆盖本机」），之后不会再把它误判成冲突。
+ */
+export declare function restoreCommit(deps: Omit<SyncDeps, 'mode'> & {
+    targetHash: string;
+}): Promise<SyncResult>;
 /** 冲突的人工裁决。[keep] = 'local' 用本机覆盖上游，'remote' 用上游覆盖本机。 */
 export declare function resolveConflict(deps: Omit<SyncDeps, 'mode'> & {
     keep: 'local' | 'remote';

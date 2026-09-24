@@ -72,6 +72,8 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  // 进度弹窗显示的当前动作名（保存/测试/同步/上传/恢复…）。
+  const [busyLabel, setBusyLabel] = useState('');
   const [report, setReport] = useState<SyncReport | null>(null);
 
   // 表单
@@ -108,9 +110,10 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
     void refresh();
   }, [refresh]);
 
-  /** 统一的「跑一件事」包装：忙碌标记 + 错误/结果归位。 */
-  const run = async (fn: () => Promise<void>): Promise<void> => {
+  /** 统一的「跑一件事」包装：忙碌标记 + 进度弹窗文案 + 错误/结果归位。 */
+  const run = async (fn: () => Promise<void>, label = ''): Promise<void> => {
     setBusy(true);
+    setBusyLabel(label);
     setError('');
     setNote('');
     try {
@@ -119,8 +122,24 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setBusyLabel('');
     }
   };
+
+  // 自动/后台触发时 status.run.running 会变 true：这时轮询状态，让进度弹窗与列表跟着刷新，
+  // 结束后自动收起。手动动作由 busy 直接驱动，不依赖这里。
+  useEffect(() => {
+    if (status?.run.running !== true) return;
+    let alive = true;
+    const timer = setInterval(() => {
+      if (!alive) return;
+      void refresh();
+    }, 2000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [status?.run.running, refresh]);
 
   const save = (): Promise<void> =>
     run(async () => {
@@ -141,27 +160,35 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
       setEncryptPassword('');
       setNote(t('state.saved'));
       await refresh();
-    });
+    }, t('action.save'));
 
   const test = (): Promise<void> =>
     run(async () => {
       await api.test(url, username, password);
       setNote(t('state.testOk'));
-    });
+    }, t('action.test'));
 
   const syncNow = (): Promise<void> =>
     run(async () => {
       const r = await api.trigger('auto', password === '' ? undefined : password);
       setReport(r);
       await refresh();
-    });
+    }, t('action.syncNow'));
 
   const resolve = (keep: 'local' | 'remote'): Promise<void> =>
     run(async () => {
       const r = await api.resolve(keep, password === '' ? undefined : password);
       setReport(r);
       await refresh();
-    });
+    }, keep === 'local' ? t('action.keepLocal') : t('action.keepRemote'));
+
+  /** 恢复某个历史版本：用那一版覆盖本机（会先弹确认，避免误点）。 */
+  const restore = (hash: string): Promise<void> =>
+    run(async () => {
+      const r = await api.restore(hash, password === '' ? undefined : password);
+      setReport(r);
+      await refresh();
+    }, t('action.restoreThis'));
 
   if (status === null && error === '') {
     return <div style={{ padding: 16 }}>{t('state.loading')}</div>;
@@ -290,14 +317,8 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
           <button style={button} disabled={busy} onClick={() => void run(async () => {
             setReport(await api.trigger('push', password === '' ? undefined : password));
             await refresh();
-          })}>
+          }, t('action.push'))}>
             {t('action.push')}
-          </button>
-          <button style={button} disabled={busy} onClick={() => void run(async () => {
-            setReport(await api.trigger('pull', password === '' ? undefined : password));
-            await refresh();
-          })}>
-            {t('action.pull')}
           </button>
         </div>
         {status?.run.running === true && <div style={muted}>{t('state.running')}</div>}
@@ -318,13 +339,25 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
             <span style={muted}>{new Date(c.at).toLocaleString()}</span>
             <span style={muted}>{c.file}</span>
             <span style={muted}>{c.tier}</span>
+            <button
+              style={button}
+              disabled={busy}
+              onClick={() => {
+                // 覆盖本机是破坏性动作：先弹一次确认，避免误点。
+                if (typeof window !== 'undefined' &&
+                  !window.confirm(t('confirm.restore').replace('%s', c.hash.slice(0, 12)))) return;
+                void restore(c.hash);
+              }}
+            >
+              {t('action.restoreThis')}
+            </button>
           </div>
         ))}
         <div style={row}>
           <button style={button} disabled={busy} onClick={() => void run(async () => {
             setReport(await api.trigger('pull', password === '' ? undefined : password));
             await refresh();
-          })}>
+          }, t('action.pull'))}>
             {t('action.pull')}
           </button>
           <button style={button} disabled={busy} onClick={() => void run(async () => {
@@ -368,6 +401,37 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
             {report.lines.join('\n')}
           </pre>
         </section>
+      )}
+      {/* ───────── 进度弹窗（阻挡操作，避免重复点击 / 不知道点没点到）───────── */}
+      {(busy || status?.run.running === true) && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+          // 拦住冒泡：遮罩期间任何点击都不落到底下的表单/按钮上
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{
+              ...box,
+              minWidth: 220,
+              alignItems: 'center',
+              background: 'var(--dsh-bg, #1e1e1e)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>
+              {busyLabel !== '' ? busyLabel : t('state.running')}
+            </div>
+            <div style={muted}>{t('state.busyHint')}</div>
+          </div>
+        </div>
       )}
     </div>
   );

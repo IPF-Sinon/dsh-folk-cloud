@@ -51,9 +51,11 @@ declare const zh: {
   readonly 'action.syncNow': "立即同步";
   readonly 'action.push': "只上传";
   readonly 'action.pull': "只从上游恢复";
+  readonly 'action.restoreThis': "恢复此版本";
   readonly 'action.forget': "忘记上游锚点";
   readonly 'action.keepLocal': "用本机覆盖上游";
   readonly 'action.keepRemote': "用上游覆盖本机";
+  readonly 'confirm.restore': "确定用历史版本 %s 覆盖本机吗？当前内容会被这一版替换。";
   readonly 'state.loading': "读取中…";
   readonly 'state.saved': "已保存。";
   readonly 'state.testOk': "连接正常。";
@@ -66,6 +68,7 @@ declare const zh: {
   readonly 'state.managerMissing': "未检测到 dsh-config-manager：DSH 数据无法备份/恢复，请先安装并启用它。";
   readonly 'state.tierFallback': "当前档位会回退为：%s";
   readonly 'state.running': "同步进行中…";
+  readonly 'state.busyHint': "处理中，请稍候，不要重复操作…";
   readonly 'state.history': "提交历史（本机记录）";
   readonly 'state.history.empty': "还没有提交记录。";
   readonly 'state.conflict.title': "上游与本机都有改动";

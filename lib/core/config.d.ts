@@ -128,3 +128,5 @@ export declare function readState(dir: string): Promise<CloudState>;
 export declare function writeState(dir: string, state: CloudState): Promise<void>;
 /** 把一条提交并进 manifest（同 hash 覆盖，时间倒序，上限 [MAX_COMMITS]）。 */
 export declare function mergeCommit(manifest: RemoteManifest, commit: Commit): RemoteManifest;
+/** 从清单里删掉一个提交；head 自动落到剩下最新的一条（没有则空）。 */
+export declare function removeCommit(manifest: RemoteManifest, hash: string): RemoteManifest;

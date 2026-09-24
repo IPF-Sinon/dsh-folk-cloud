@@ -54,7 +54,7 @@ import {
   appBridgeAvailable,
   configManagerAvailable,
 } from './core/host-bridge.ts';
-import { resolveConflict, restoreCommit, runSync, type SyncReport } from './core/sync-engine.ts';
+import { deleteCommit, resolveConflict, restoreCommit, runSync, type SyncReport } from './core/sync-engine.ts';
 import { readRemoteManifest } from './core/store.ts';
 import { WebdavError, WebdavTransport } from './webdav/transport.ts';
 
@@ -72,6 +72,7 @@ const API = {
   trigger: '/api/dsh-folk-cloud/trigger',
   resolve: '/api/dsh-folk-cloud/resolve',
   restore: '/api/dsh-folk-cloud/restore',
+  deleteCommit: '/api/dsh-folk-cloud/delete-commit',
   forget: '/api/dsh-folk-cloud/forget',
 } as const;
 
@@ -88,7 +89,17 @@ interface RunState {
   startedAt: string;
   finishedAt: string;
   lastReport: SyncReport | null;
+  /** 当前阶段（进度弹窗画步骤用）。 */
+  phase: string;
+  /** 传输阶段的已传/总字节（进度条用；非传输阶段为 0）。 */
+  uploaded: number;
+  total: number;
+  /** 本轮实时日志（弹窗流式显示；封顶行数，旧的丢掉）。 */
+  lines: string[];
 }
+
+/** 实时日志最多留这么多行（超过丢最旧的，避免无限涨）。 */
+const MAX_RUN_LINES = 300;
 
 /**
  * 插件数据目录：`$DSH_HOME/dsh-folk-cloud/`。
@@ -120,7 +131,10 @@ class CloudRuntime {
   readonly dataDir = resolveDataDir();
   /** 同步互斥：一次只跑一轮（定时器与手动触发可能撞在一起）。 */
   private running = false;
-  private run: RunState = { running: false, startedAt: '', finishedAt: '', lastReport: null };
+  private run: RunState = {
+    running: false, startedAt: '', finishedAt: '', lastReport: null,
+    phase: '', uploaded: 0, total: 0, lines: [],
+  };
   private timer: ReturnType<typeof setInterval> | undefined;
 
   private readonly credentials: CredentialProvider;
@@ -157,6 +171,44 @@ class CloudRuntime {
 
   get runState(): RunState {
     return this.run;
+  }
+
+  /** 本轮开跑：重置阶段/进度/日志缓冲，标记 running。 */
+  private beginRun(): void {
+    this.running = true;
+    this.run = {
+      running: true, startedAt: new Date().toISOString(), finishedAt: '', lastReport: null,
+      phase: 'preparing', uploaded: 0, total: 0, lines: [],
+    };
+  }
+
+  /** 一行实时日志：进 run.lines（封顶）+ 转给宿主 logger。 */
+  private emitLine(line: string): void {
+    this.run.lines.push(line);
+    if (this.run.lines.length > MAX_RUN_LINES) this.run.lines.splice(0, this.run.lines.length - MAX_RUN_LINES);
+    this.log(line);
+  }
+
+  /** 阶段/字节进度回调（喂给 sync-engine 的 onProgress）。 */
+  private onProgress(p: { phase: string; uploaded?: number; total?: number }): void {
+    this.run.phase = p.phase;
+    this.run.uploaded = p.uploaded ?? 0;
+    this.run.total = p.total ?? 0;
+  }
+
+  /** 收尾：把本轮 run 标记为结束并记下报告（保留已累计的日志/进度）。 */
+  private finishRun(report: SyncReport): SyncReport {
+    this.run = {
+      running: false,
+      startedAt: this.run.startedAt,
+      finishedAt: new Date().toISOString(),
+      lastReport: report,
+      phase: 'done',
+      uploaded: this.run.uploaded,
+      total: this.run.total,
+      lines: this.run.lines,
+    };
+    return report;
   }
 
   /** 保存配置：校验地址、写口令到凭据、落盘（口令不进文件）。 */
@@ -247,7 +299,16 @@ class CloudRuntime {
       configManagerAvailable: managerAvailable,
       lastSyncedHash: state.lastSyncedHash,
       history: state.history,
-      run: { running: this.run.running, startedAt: this.run.startedAt, finishedAt: this.run.finishedAt },
+      run: {
+        running: this.run.running,
+        startedAt: this.run.startedAt,
+        finishedAt: this.run.finishedAt,
+        phase: this.run.phase,
+        uploaded: this.run.uploaded,
+        total: this.run.total,
+        // 只回尾部若干行给弹窗滚动看，别把整份日志塞进每次 status 轮询
+        lines: this.run.lines.slice(-80),
+      },
       lastReport: this.run.lastReport,
     };
   }
@@ -266,8 +327,7 @@ class CloudRuntime {
         lines: [],
       };
     }
-    this.running = true;
-    this.run = { running: true, startedAt: new Date().toISOString(), finishedAt: '', lastReport: null };
+    this.beginRun();
     try {
       const cfg = await this.config();
       const state = await this.state();
@@ -283,7 +343,8 @@ class CloudRuntime {
         workDir: this.dataDir,
         mode,
         ...(encryptPw === '' ? {} : { password: encryptPw }),
-        onLine: (line) => this.log(line),
+        onLine: (line) => this.emitLine(line),
+        onProgress: (p) => this.onProgress(p),
       });
       await writeState(this.dataDir, result.state);
       this.run = {
@@ -291,6 +352,10 @@ class CloudRuntime {
         startedAt: this.run.startedAt,
         finishedAt: new Date().toISOString(),
         lastReport: result.report,
+        phase: 'done',
+        uploaded: this.run.uploaded,
+        total: this.run.total,
+        lines: this.run.lines,
       };
       return result.report;
     } catch (error) {
@@ -305,7 +370,10 @@ class CloudRuntime {
         conflict: null,
         lines: [message],
       };
-      this.run = { running: false, startedAt: this.run.startedAt, finishedAt: new Date().toISOString(), lastReport: report };
+      this.run = {
+        running: false, startedAt: this.run.startedAt, finishedAt: new Date().toISOString(),
+        lastReport: report, phase: 'done', uploaded: 0, total: 0, lines: [...this.run.lines, message],
+      };
       return report;
     } finally {
       this.running = false;
@@ -314,8 +382,7 @@ class CloudRuntime {
 
   /** 冲突裁决：`keep` = local 用本机覆盖上游，remote 用上游覆盖本机。 */
   async resolve(keep: 'local' | 'remote', password?: string): Promise<SyncReport> {
-    this.running = true;
-    this.run = { running: true, startedAt: new Date().toISOString(), finishedAt: '', lastReport: null };
+    this.beginRun();
     try {
       const cfg = await this.config();
       const state = await this.state();
@@ -330,16 +397,11 @@ class CloudRuntime {
         workDir: this.dataDir,
         keep,
         ...(encryptPw === '' ? {} : { password: encryptPw }),
-        onLine: (line) => this.log(line),
+        onLine: (line) => this.emitLine(line),
+        onProgress: (p) => this.onProgress(p),
       });
       await writeState(this.dataDir, result.state);
-      this.run = {
-        running: false,
-        startedAt: this.run.startedAt,
-        finishedAt: new Date().toISOString(),
-        lastReport: result.report,
-      };
-      return result.report;
+      return this.finishRun(result.report);
     } finally {
       this.running = false;
     }
@@ -359,8 +421,7 @@ class CloudRuntime {
         lines: [],
       };
     }
-    this.running = true;
-    this.run = { running: true, startedAt: new Date().toISOString(), finishedAt: '', lastReport: null };
+    this.beginRun();
     try {
       const cfg = await this.config();
       const state = await this.state();
@@ -375,19 +436,14 @@ class CloudRuntime {
         workDir: this.dataDir,
         targetHash: hash,
         ...(encryptPw === '' ? {} : { password: encryptPw }),
-        onLine: (line) => this.log(line),
+        onLine: (line) => this.emitLine(line),
+        onProgress: (p) => this.onProgress(p),
       });
       await writeState(this.dataDir, result.state);
-      this.run = {
-        running: false,
-        startedAt: this.run.startedAt,
-        finishedAt: new Date().toISOString(),
-        lastReport: result.report,
-      };
-      return result.report;
+      return this.finishRun(result.report);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const report: SyncReport = {
+      return this.finishRun({
         outcome: 'error',
         message,
         localHash: '',
@@ -395,10 +451,45 @@ class CloudRuntime {
         file: '',
         tierFellBackTo: '',
         conflict: null,
-        lines: [message],
+        lines: [...this.run.lines, message],
+      });
+    } finally {
+      this.running = false;
+    }
+  }
+
+  /** 从云端永久删除一个历史版本（删 WebDAV 文件 + 摘清单）。 */
+  async deleteCommit(hash: string): Promise<SyncReport> {
+    if (this.running) {
+      return {
+        outcome: 'error', message: '已经有一轮同步在跑，请稍后再试。',
+        localHash: '', remoteHash: '', file: '', tierFellBackTo: '', conflict: null, lines: [],
       };
-      this.run = { running: false, startedAt: this.run.startedAt, finishedAt: new Date().toISOString(), lastReport: report };
-      return report;
+    }
+    this.beginRun();
+    try {
+      const cfg = await this.config();
+      const state = await this.state();
+      const transport = await this.transport(cfg);
+      const result = await deleteCommit({
+        transport,
+        producer: new HostBackupProducer(),
+        restorer: new HostBackupRestorer(),
+        config: cfg,
+        state,
+        workDir: this.dataDir,
+        targetHash: hash,
+        onLine: (line) => this.emitLine(line),
+        onProgress: (p) => this.onProgress(p),
+      });
+      await writeState(this.dataDir, result.state);
+      return this.finishRun(result.report);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.finishRun({
+        outcome: 'error', message, localHash: '', remoteHash: '', file: '',
+        tierFellBackTo: '', conflict: null, lines: [...this.run.lines, message],
+      });
     } finally {
       this.running = false;
     }
@@ -639,6 +730,20 @@ export function makeRoutes(runtime: CloudRuntime): WebRoute[] {
         }
         const password = typeof body?.['password'] === 'string' ? body['password'] : undefined;
         writeJson(res, 200, await runtime.restoreCommit(hash, password));
+      },
+    },
+    {
+      kind: 'exact',
+      path: API.deleteCommit,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return;
+        const body = await readJsonBody(req);
+        const hash = typeof body?.['hash'] === 'string' ? body['hash'] : '';
+        if (hash === '') {
+          writeJson(res, 400, { error: 'hash 不能为空' });
+          return;
+        }
+        writeJson(res, 200, await runtime.deleteCommit(hash));
       },
     },
     {

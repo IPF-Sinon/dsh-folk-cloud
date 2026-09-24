@@ -77,6 +77,14 @@ export interface SyncDeps {
     mode: 'auto' | 'push' | 'pull';
     password?: string;
     onLine?: (line: string) => void;
+    /** 阶段/字节进度上报（供进度弹窗画阶段步骤 + 上传/下载进度条）。 */
+    onProgress?: (p: SyncProgress) => void;
+}
+/** 一轮同步的阶段与字节进度（uploaded/total 仅在传输阶段有意义，单位字节）。 */
+export interface SyncProgress {
+    phase: 'preparing' | 'producing' | 'uploading' | 'finalizing' | 'downloading' | 'restoring' | 'deleting' | 'done';
+    uploaded?: number;
+    total?: number;
 }
 export interface SyncResult {
     report: SyncReport;
@@ -92,6 +100,10 @@ export declare function runSync(deps: SyncDeps): Promise<SyncResult>;
  * 本机锚点对齐到这一版（等同「用这一版覆盖本机」），之后不会再把它误判成冲突。
  */
 export declare function restoreCommit(deps: Omit<SyncDeps, 'mode'> & {
+    targetHash: string;
+}): Promise<SyncResult>;
+/** 从云端永久删除一个历史版本：删 WebDAV 上的备份文件 + 从清单里摘掉这条提交。 */
+export declare function deleteCommit(deps: Omit<SyncDeps, 'mode'> & {
     targetHash: string;
 }): Promise<SyncResult>;
 /** 冲突的人工裁决。[keep] = 'local' 用本机覆盖上游，'remote' 用上游覆盖本机。 */

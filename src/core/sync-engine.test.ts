@@ -18,7 +18,7 @@ import {
   type CloudState,
   type RemoteManifest,
 } from './config.ts';
-import { runSync, resolveConflict, type BackupProducer, type BackupRestorer, type ProducedBackup } from './sync-engine.ts';
+import { runSync, resolveConflict, restoreCommit, deleteCommit, type BackupProducer, type BackupRestorer, type ProducedBackup } from './sync-engine.ts';
 import { sha256File } from './store.ts';
 import type { WebdavTransport } from '../webdav/transport.ts';
 
@@ -30,8 +30,11 @@ class FakeTransport {
     return this.files.get(file) ?? null;
   }
 
-  async put(file: string, body: Buffer): Promise<void> {
+  async put(file: string, body: Buffer, _contentType?: string, onProgress?: (sent: number) => void): Promise<void> {
     this.files.set(file, Buffer.from(body));
+    // 模拟真实传输：分两拍报进度（中途 + 末尾），让进度回调测试拿到单调增长的样本。
+    onProgress?.(Math.floor(body.length / 2));
+    onProgress?.(body.length);
   }
 
   async ensureDir(): Promise<void> {
@@ -358,4 +361,153 @@ test('恢复失败时不推进锚点（下次还会重试）', async () => {
 
   assert.equal(report.outcome, 'error');
   assert.equal(next.lastSyncedHash, anchor, '失败不推进锚点');
+});
+
+/** 造一个「上游有两份历史」的 manifest（新的在前）。返回两条的 hash。 */
+async function seedTwo(fake: FakeTransport): Promise<{ older: string; newer: string; olderFile: string }> {
+  const d = await tmpDir();
+  const write = async (content: string): Promise<string> => {
+    const f = path.join(d, `${content}.zip`);
+    await fs.writeFile(f, content);
+    return sha256File(f);
+  };
+  const olderHash = await write('OLD-VERSION');
+  const newerHash = await write('NEW-VERSION');
+  const olderFile = 'folk-cloud-20260101-000000-old.zip';
+  const newerFile = 'folk-cloud-20260102-000000-new.zip';
+  fake.files.set(`dsh-folk/${olderFile}`, Buffer.from('OLD-VERSION'));
+  fake.files.set(`dsh-folk/${newerFile}`, Buffer.from('NEW-VERSION'));
+  const manifest: RemoteManifest = {
+    schemaVersion: 1,
+    head: newerHash,
+    commits: [
+      { hash: newerHash, at: '2026-01-02T00:00:00.000Z', file: newerFile, size: 11, tier: 'dsh-only', device: 'test' },
+      { hash: olderHash, at: '2026-01-01T00:00:00.000Z', file: olderFile, size: 11, tier: 'dsh-only', device: 'test' },
+    ],
+  };
+  fake.files.set('dsh-folk/index.json', Buffer.from(JSON.stringify(manifest)));
+  return { older: olderHash, newer: newerHash, olderFile };
+}
+
+test('restoreCommit：恢复指定历史版本（非 head），锚点对齐到那一版', async () => {
+  const fake = new FakeTransport();
+  const { older } = await seedTwo(fake);
+  const work = await tmpDir();
+  const sink = { calls: [] as string[] };
+
+  const { report, state: next } = await restoreCommit({
+    transport: asTransport(fake),
+    producer: producer('IGNORED'),
+    restorer: restorer(sink),
+    config: cfg(),
+    state: emptyState(),
+    workDir: work,
+    targetHash: older,
+  });
+
+  assert.equal(report.outcome, 'restored');
+  assert.deepEqual(sink.calls, ['OLD-VERSION'], '恢复的是旧那一版的内容');
+  assert.equal(next.lastSyncedHash, older, '锚点对齐到被恢复的历史版');
+});
+
+test('restoreCommit：目标哈希不在清单里 → 报错，不恢复', async () => {
+  const fake = new FakeTransport();
+  await seedTwo(fake);
+  const sink = { calls: [] as string[] };
+  const { report } = await restoreCommit({
+    transport: asTransport(fake),
+    producer: producer('IGNORED'),
+    restorer: restorer(sink),
+    config: cfg(),
+    state: emptyState(),
+    workDir: await tmpDir(),
+    targetHash: 'deadbeef'.repeat(8),
+  });
+  assert.equal(report.outcome, 'error');
+  assert.equal(sink.calls.length, 0);
+});
+
+test('deleteCommit：删非 head 版本 → 摘文件+摘清单，head 不变', async () => {
+  const fake = new FakeTransport();
+  const { older, newer, olderFile } = await seedTwo(fake);
+
+  const { report, state: next, manifest } = await deleteCommit({
+    transport: asTransport(fake),
+    producer: producer('IGNORED'),
+    restorer: restorer({ calls: [] }),
+    config: cfg(),
+    state: { ...emptyState(), history: [
+      { hash: newer, at: '2026-01-02T00:00:00.000Z', file: 'new', size: 11, tier: 'dsh-only', device: 't' },
+      { hash: older, at: '2026-01-01T00:00:00.000Z', file: 'old', size: 11, tier: 'dsh-only', device: 't' },
+    ] },
+    workDir: await tmpDir(),
+    targetHash: older,
+  });
+
+  assert.equal(report.outcome, 'restored');
+  assert.equal(fake.files.has(`dsh-folk/${olderFile}`), false, '云端文件被删');
+  assert.equal(manifest?.head, newer, 'head 仍是较新那条');
+  assert.equal(manifest?.commits.length, 1, '清单里只剩一条');
+  assert.equal(next.history.length, 1, '本机历史也摘掉了');
+  assert.equal(next.history[0]?.hash, newer);
+});
+
+test('deleteCommit：删的正是 head → head 落到剩下最新的一条', async () => {
+  const fake = new FakeTransport();
+  const { older, newer } = await seedTwo(fake);
+
+  const { manifest } = await deleteCommit({
+    transport: asTransport(fake),
+    producer: producer('IGNORED'),
+    restorer: restorer({ calls: [] }),
+    config: cfg(),
+    state: emptyState(),
+    workDir: await tmpDir(),
+    targetHash: newer,
+  });
+
+  assert.equal(manifest?.head, older, '删掉 head 后落到 older');
+  assert.equal(manifest?.commits.length, 1);
+});
+
+test('deleteCommit：删锚点所在版本 → 锚点清空', async () => {
+  const fake = new FakeTransport();
+  const { older } = await seedTwo(fake);
+  const { state: next } = await deleteCommit({
+    transport: asTransport(fake),
+    producer: producer('IGNORED'),
+    restorer: restorer({ calls: [] }),
+    config: cfg(),
+    state: { ...emptyState(), lastSyncedHash: older },
+    workDir: await tmpDir(),
+    targetHash: older,
+  });
+  assert.equal(next.lastSyncedHash, '', '删掉的正是锚点 → 锚点清空');
+});
+
+test('上传进度回调：uploaded 单调增长、末尾等于总字节', async () => {
+  const fake = new FakeTransport();
+  const head = await seedRemote(fake, 'OLD');
+  const work = await tmpDir();
+  const seen: Array<{ uploaded: number; total: number }> = [];
+
+  const { report } = await runSync({
+    transport: asTransport(fake),
+    producer: producer('NEW-BIG-CONTENT'),
+    restorer: restorer({ calls: [] }),
+    config: cfg(),
+    state: { ...emptyState(), lastSyncedHash: head, lastLocalHash: head },
+    workDir: work,
+    mode: 'push',
+    onProgress: (p) => {
+      if (p.phase === 'uploading' && p.total !== undefined) {
+        seen.push({ uploaded: p.uploaded ?? 0, total: p.total });
+      }
+    },
+  });
+
+  assert.equal(report.outcome, 'uploaded');
+  assert.ok(seen.length >= 1, '至少上报一次上传进度');
+  const last = seen[seen.length - 1]!;
+  assert.equal(last.uploaded, last.total, '结束时已传 = 总字节');
 });

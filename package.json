@@ -1,6 +1,6 @@
 {
   "name": "dsh-folk-cloud",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "GPL-3.0",
   "description": "WebDAV cloud backup/restore for DSH-Folk: periodically syncs a full backup archive (DSH config plus, when the host app provides it, Android app settings and appearance) to a WebDAV server, with hash-based dedup and manual conflict resolution. Depends on dsh-config-manager for the DSH-side export/import engine. DSH-Folk 的 WebDAV 云备份插件。",
   "keywords": [

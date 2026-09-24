@@ -27,7 +27,18 @@ export interface CloudStatus {
   configManagerAvailable: boolean;
   lastSyncedHash: string;
   history: CloudCommit[];
-  run: { running: boolean; startedAt: string; finishedAt: string };
+  run: {
+    running: boolean;
+    startedAt: string;
+    finishedAt: string;
+    /** 当前阶段（进度弹窗步骤高亮用）。 */
+    phase?: string;
+    /** 传输阶段已传/总字节（上传进度条用）。 */
+    uploaded?: number;
+    total?: number;
+    /** 本轮实时日志尾部（弹窗滚动显示）。 */
+    lines?: string[];
+  };
   lastReport: SyncReport | null;
 }
 
@@ -144,6 +155,17 @@ export class CloudApi {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ hash, ...(password === undefined ? {} : { password }) }),
+      }),
+    );
+  }
+
+  /** 从云端永久删除一个历史版本（删文件 + 摘清单）。 */
+  async deleteCommit(hash: string): Promise<SyncReport> {
+    return readJson<SyncReport>(
+      await fetch('/api/dsh-folk-cloud/delete-commit', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hash }),
       }),
     );
   }

@@ -14,6 +14,13 @@ interface RunState {
     startedAt: string;
     finishedAt: string;
     lastReport: SyncReport | null;
+    /** 当前阶段（进度弹窗画步骤用）。 */
+    phase: string;
+    /** 传输阶段的已传/总字节（进度条用；非传输阶段为 0）。 */
+    uploaded: number;
+    total: number;
+    /** 本轮实时日志（弹窗流式显示；封顶行数，旧的丢掉）。 */
+    lines: string[];
 }
 /**
  * 插件数据目录：`$DSH_HOME/dsh-folk-cloud/`。
@@ -38,6 +45,14 @@ declare class CloudRuntime {
     /** 按当前配置造一个传输器；未配置地址时抛错（调用方回 400）。 */
     transport(cfg?: CloudConfig): Promise<WebdavTransport>;
     get runState(): RunState;
+    /** 本轮开跑：重置阶段/进度/日志缓冲，标记 running。 */
+    private beginRun;
+    /** 一行实时日志：进 run.lines（封顶）+ 转给宿主 logger。 */
+    private emitLine;
+    /** 阶段/字节进度回调（喂给 sync-engine 的 onProgress）。 */
+    private onProgress;
+    /** 收尾：把本轮 run 标记为结束并记下报告（保留已累计的日志/进度）。 */
+    private finishRun;
     /** 保存配置：校验地址、写口令到凭据、落盘（口令不进文件）。 */
     saveConfig(raw: Record<string, unknown>): Promise<CloudConfig>;
     /** WebDAV 口令是否已配置（只回布尔，永不回值）。 */
@@ -62,6 +77,8 @@ declare class CloudRuntime {
     resolve(keep: 'local' | 'remote', password?: string): Promise<SyncReport>;
     /** 恢复一个指定的历史版本（用上游那一版覆盖本机，锚点对齐到这一版）。 */
     restoreCommit(hash: string, password?: string): Promise<SyncReport>;
+    /** 从云端永久删除一个历史版本（删 WebDAV 文件 + 摘清单）。 */
+    deleteCommit(hash: string): Promise<SyncReport>;
     /** 列出上游提交（只读，不写任何东西）。 */
     remoteCommits(): Promise<{
         ok: boolean;

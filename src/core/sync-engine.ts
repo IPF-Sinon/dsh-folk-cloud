@@ -31,6 +31,7 @@ import path from 'node:path';
 import {
   emptyState,
   mergeCommit,
+  removeCommit,
   type BackupTier,
   type CloudConfig,
   type CloudState,
@@ -140,6 +141,15 @@ export interface SyncDeps {
   mode: 'auto' | 'push' | 'pull';
   password?: string;
   onLine?: (line: string) => void;
+  /** 阶段/字节进度上报（供进度弹窗画阶段步骤 + 上传/下载进度条）。 */
+  onProgress?: (p: SyncProgress) => void;
+}
+
+/** 一轮同步的阶段与字节进度（uploaded/total 仅在传输阶段有意义，单位字节）。 */
+export interface SyncProgress {
+  phase: 'preparing' | 'producing' | 'uploading' | 'finalizing' | 'downloading' | 'restoring' | 'deleting' | 'done';
+  uploaded?: number;
+  total?: number;
 }
 
 export interface SyncResult {
@@ -158,6 +168,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncResult> {
   };
   const state = deps.state;
   const remoteDir = config.remoteDir;
+  deps.onProgress?.({ phase: 'preparing' });
 
   await prepareLocalDir(workDir);
 
@@ -182,6 +193,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncResult> {
   // ② 出一份本机备份（这一步同时给出 localHash）
   let produced: ProducedBackup;
   try {
+    deps.onProgress?.({ phase: 'producing' });
     produced = await producer.produce(workDir, config.tier, {
       includeSessions: config.includeSessions,
       ...(config.encrypt && deps.password !== undefined ? { password: deps.password } : {}),
@@ -316,7 +328,11 @@ async function doPush(args: {
   try {
     body = await fs.readFile(produced.file);
     await transport.ensureDir(config.remoteDir);
-    await transport.put(joinRemote(config.remoteDir, file), body);
+    deps.onProgress?.({ phase: 'uploading', uploaded: 0, total: body.length });
+    await transport.put(joinRemote(config.remoteDir, file), body, 'application/octet-stream', (sent) => {
+      deps.onProgress?.({ phase: 'uploading', uploaded: sent, total: body.length });
+    });
+    deps.onProgress?.({ phase: 'finalizing', uploaded: body.length, total: body.length });
   } catch (error) {
     await removeQuietly(produced.file);
     say(`上传失败：${describe(error)}`);
@@ -420,6 +436,64 @@ export async function restoreCommit(
   return await pullCommit({ deps: { ...rest, mode: 'pull' }, manifest, commit, state: rest.state, lines, say });
 }
 
+/** 从云端永久删除一个历史版本：删 WebDAV 上的备份文件 + 从清单里摘掉这条提交。 */
+export async function deleteCommit(
+  deps: Omit<SyncDeps, 'mode'> & { targetHash: string },
+): Promise<SyncResult> {
+  const { targetHash, transport, config, state } = deps;
+  const lines: string[] = [];
+  const say = (line: string): void => {
+    lines.push(line);
+    deps.onLine?.(line);
+  };
+  deps.onProgress?.({ phase: 'deleting' });
+  let manifest: RemoteManifest;
+  try {
+    manifest = await readRemoteManifest(transport, config.remoteDir);
+  } catch (error) {
+    return { report: errorReport(lines, `读取上游清单失败：${describe(error)}`), state, manifest: null };
+  }
+  const commit = manifest.commits.find((c) => c.hash === targetHash);
+  if (commit === undefined) {
+    return { report: errorReport(lines, `上游清单里找不到该历史版本：${targetHash.slice(0, 12)}`), state, manifest };
+  }
+  // 先删文件再改清单：即便删文件成功、写清单失败，清单里那条也只是指向一个已不存在的文件，
+  // 再次删同一条时底层 DELETE 对 404 宽容，不会卡住。
+  try {
+    await transport.delete(joinRemote(config.remoteDir, commit.file));
+    say(`已删除云端文件 ${commit.file}`);
+  } catch (error) {
+    return { report: errorReport(lines, `删除云端文件失败：${describe(error)}`), state, manifest };
+  }
+  const next = removeCommit(manifest, targetHash);
+  try {
+    await writeRemoteManifest(transport, config.remoteDir, next);
+  } catch (error) {
+    return { report: errorReport(lines, `已删文件但更新上游清单失败：${describe(error)}`), state, manifest };
+  }
+  say(`已从上游清单摘除 ${targetHash.slice(0, 12)}`);
+  // 本机历史列表同步摘掉；若删的正是锚点，锚点清空（下轮 auto 会按新 head 重新判断）。
+  const anchorGone = state.lastSyncedHash === targetHash;
+  return {
+    report: {
+      outcome: 'restored',
+      message: `已删除历史版本 ${targetHash.slice(0, 12)}。`,
+      localHash: '',
+      remoteHash: next.head,
+      file: commit.file,
+      tierFellBackTo: '',
+      conflict: null,
+      lines,
+    },
+    state: {
+      ...state,
+      history: state.history.filter((c) => c.hash !== targetHash),
+      ...(anchorGone ? { lastSyncedHash: '' } : {}),
+    },
+    manifest: next,
+  };
+}
+
 /** 下载指定提交的文件、校验哈希、交给 restorer 恢复，成功后把锚点对齐到这一版。 */
 async function pullCommit(args: {
   deps: SyncDeps;
@@ -434,6 +508,7 @@ async function pullCommit(args: {
   const head = commit.hash;
   const local = path.join(deps.workDir, commit.file);
   try {
+    deps.onProgress?.({ phase: 'downloading' });
     const body = await transport.get(joinRemote(config.remoteDir, commit.file));
     if (body === null) {
       return { report: errorReport(lines, `上游文件不存在：${commit.file}`), state, manifest };
@@ -461,6 +536,7 @@ async function pullCommit(args: {
   }
 
   try {
+    deps.onProgress?.({ phase: 'restoring' });
     const report = await restorer.restore(local, {
       ...(deps.password === undefined ? {} : { password: deps.password }),
       ...(deps.onLine === undefined ? {} : { onLine: deps.onLine }),

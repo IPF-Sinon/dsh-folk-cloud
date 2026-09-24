@@ -85,6 +85,8 @@ export interface WebdavRequestOptions {
   headers?: Record<string, string>;
   body?: Buffer;
   timeoutMs?: number;
+  /** 上传进度回调（已交给 socket 的字节数）。仅 PUT 大包时有意义。 */
+  onUploadProgress?: (sent: number) => void;
 }
 
 /** 可注入的请求实现（测试用；默认走 node:http/https 流式请求）。 */
@@ -136,7 +138,7 @@ const defaultRequest: WebdavRequestFn = async (method, url, options, auth) => {
 
     let res: WebdavResponse;
     for (let redirects = 0; ; redirects++) {
-      res = await rawRequest(currentMethod, currentUrl, currentHeaders, currentBody, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      res = await rawRequest(currentMethod, currentUrl, currentHeaders, currentBody, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, options.onUploadProgress);
       if (!REDIRECT_STATUSES.has(res.status) || res.headers['location'] === undefined) break;
       if (redirects >= MAX_REDIRECTS) {
         throw new WebdavError(`重定向超过 ${MAX_REDIRECTS} 跳`, res.status);
@@ -174,6 +176,7 @@ function rawRequest(
   headers: Record<string, string>,
   body: Buffer | undefined,
   timeoutMs: number,
+  onUploadProgress?: (sent: number) => void,
 ): Promise<WebdavResponse> {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
@@ -215,8 +218,28 @@ function rawRequest(
       req.destroy(new Error(`请求超时（${timeoutMs}ms）`));
     });
     req.on('error', reject);
-    if (body !== undefined) req.write(body);
-    req.end();
+    if (body !== undefined) {
+      // 分块写 + 背压等待：一次性 req.write(整包) 在大包时既占内存峰值又拿不到进度。
+      // 按 256KB 一段写，写不动（背压）就等 drain 再继续 —— 进度大致跟着实际发送节奏走。
+      const CHUNK = 256 * 1024;
+      let off = 0;
+      const pump = (): void => {
+        while (off < body.length) {
+          const end = Math.min(off + CHUNK, body.length);
+          const ok = req.write(body.subarray(off, end));
+          off = end;
+          onUploadProgress?.(off);
+          if (!ok) {
+            req.once('drain', pump);
+            return;
+          }
+        }
+        req.end();
+      };
+      pump();
+    } else {
+      req.end();
+    }
   });
 }
 
@@ -337,11 +360,17 @@ export class WebdavTransport {
     return res.body;
   }
 
-  /** 覆盖式写入一个文件。 */
-  async put(file: string, body: Buffer, contentType = 'application/octet-stream'): Promise<void> {
+  /** 覆盖式写入一个文件。[onProgress] 报已发送字节数（大包上传进度条用）。 */
+  async put(
+    file: string,
+    body: Buffer,
+    contentType = 'application/octet-stream',
+    onProgress?: (sent: number) => void,
+  ): Promise<void> {
     const res = await this.send('PUT', this.url(file), {
       headers: { 'content-type': contentType },
       body,
+      ...(onProgress === undefined ? {} : { onUploadProgress: onProgress }),
     });
     // 201 = 新建，204 = 覆盖成功，200 = 有些服务端这么回
     if (!res.ok) {

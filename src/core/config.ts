@@ -333,3 +333,11 @@ export function mergeCommit(manifest: RemoteManifest, commit: Commit): RemoteMan
     .slice(0, MAX_COMMITS);
   return { schemaVersion: MANIFEST_SCHEMA_VERSION, head: commits[0]?.hash ?? '', commits };
 }
+
+/** 从清单里删掉一个提交；head 自动落到剩下最新的一条（没有则空）。 */
+export function removeCommit(manifest: RemoteManifest, hash: string): RemoteManifest {
+  const commits = manifest.commits
+    .filter((c) => c.hash !== hash)
+    .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  return { schemaVersion: MANIFEST_SCHEMA_VERSION, head: commits[0]?.hash ?? '', commits };
+}

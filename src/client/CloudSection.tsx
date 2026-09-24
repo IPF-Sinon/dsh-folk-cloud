@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type { CloudSectionInjected } from './client-types.ts';
 import type { CloudStatus, SyncReport } from './api.ts';
+import { SyncOverlay } from './SyncOverlay.tsx';
 
 export type CloudSectionProps =
   & PropsRuntime<'settings.section'>
@@ -106,9 +107,28 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
     }
   }, [api]);
 
+  // 只更新 status（run/history），**不碰表单字段** —— 轮询时若把 url/tier 等一并回填，
+  // 会把用户正在输入的内容冲掉。所以运行态跟随用这个，完整回填只在首屏/保存后用 refresh。
+  const pollStatus = useCallback(async () => {
+    try {
+      setStatus(await api.status());
+    } catch {
+      /* 轮询失败静默：下一拍再试，别打断用户 */
+    }
+  }, [api]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 常驻轮询：每 1.5s 只刷 status。这样自动/后台/手动触发的进度、日志、历史都能实时跟随，
+  // 用户即便不点任何东西、或刷新页面重进，也能看到「正在同步」而不是一片空白。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void pollStatus();
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [pollStatus]);
 
   /** 统一的「跑一件事」包装：忙碌标记 + 进度弹窗文案 + 错误/结果归位。 */
   const run = async (fn: () => Promise<void>, label = ''): Promise<void> => {
@@ -125,21 +145,6 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
       setBusyLabel('');
     }
   };
-
-  // 自动/后台触发时 status.run.running 会变 true：这时轮询状态，让进度弹窗与列表跟着刷新，
-  // 结束后自动收起。手动动作由 busy 直接驱动，不依赖这里。
-  useEffect(() => {
-    if (status?.run.running !== true) return;
-    let alive = true;
-    const timer = setInterval(() => {
-      if (!alive) return;
-      void refresh();
-    }, 2000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [status?.run.running, refresh]);
 
   const save = (): Promise<void> =>
     run(async () => {
@@ -189,6 +194,14 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
       setReport(r);
       await refresh();
     }, t('action.restoreThis'));
+
+  /** 从云端永久删除某个历史版本（会先弹确认，破坏性）。 */
+  const remove = (hash: string): Promise<void> =>
+    run(async () => {
+      const r = await api.deleteCommit(hash);
+      setReport(r);
+      await refresh();
+    }, t('action.deleteThis'));
 
   if (status === null && error === '') {
     return <div style={{ padding: 16 }}>{t('state.loading')}</div>;
@@ -339,27 +352,35 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
             <span style={muted}>{new Date(c.at).toLocaleString()}</span>
             <span style={muted}>{c.file}</span>
             <span style={muted}>{c.tier}</span>
-            <button
-              style={button}
-              disabled={busy}
-              onClick={() => {
-                // 覆盖本机是破坏性动作：先弹一次确认，避免误点。
-                if (typeof window !== 'undefined' &&
-                  !window.confirm(t('confirm.restore').replace('%s', c.hash.slice(0, 12)))) return;
-                void restore(c.hash);
-              }}
-            >
-              {t('action.restoreThis')}
-            </button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {/* 删除在左：从云端永久删掉这一版（破坏性，先弹确认）。 */}
+              <button
+                style={{ ...button, borderColor: '#a55', color: '#e88' }}
+                disabled={busy || status?.run.running === true}
+                onClick={() => {
+                  if (typeof window !== 'undefined' &&
+                    !window.confirm(t('confirm.delete').replace('%s', c.hash.slice(0, 12)))) return;
+                  void remove(c.hash);
+                }}
+              >
+                {t('action.deleteThis')}
+              </button>
+              <button
+                style={button}
+                disabled={busy || status?.run.running === true}
+                onClick={() => {
+                  // 覆盖本机是破坏性动作：先弹一次确认，避免误点。
+                  if (typeof window !== 'undefined' &&
+                    !window.confirm(t('confirm.restore').replace('%s', c.hash.slice(0, 12)))) return;
+                  void restore(c.hash);
+                }}
+              >
+                {t('action.restoreThis')}
+              </button>
+            </div>
           </div>
         ))}
         <div style={row}>
-          <button style={button} disabled={busy} onClick={() => void run(async () => {
-            setReport(await api.trigger('pull', password === '' ? undefined : password));
-            await refresh();
-          }, t('action.pull'))}>
-            {t('action.pull')}
-          </button>
           <button style={button} disabled={busy} onClick={() => void run(async () => {
             await api.forget();
             setNote(t('state.saved'));
@@ -404,34 +425,17 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
       )}
       {/* ───────── 进度弹窗（阻挡操作，避免重复点击 / 不知道点没点到）───────── */}
       {(busy || status?.run.running === true) && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-          }}
-          // 拦住冒泡：遮罩期间任何点击都不落到底下的表单/按钮上
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div
-            style={{
-              ...box,
-              minWidth: 220,
-              alignItems: 'center',
-              background: 'var(--dsh-bg, #1e1e1e)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            }}
-          >
-            <div style={{ fontWeight: 600 }}>
-              {busyLabel !== '' ? busyLabel : t('state.running')}
-            </div>
-            <div style={muted}>{t('state.busyHint')}</div>
-          </div>
-        </div>
+        <SyncOverlay
+          title={busyLabel !== '' ? busyLabel : t('state.running')}
+          phase={status?.run.phase ?? 'preparing'}
+          uploaded={status?.run.uploaded ?? 0}
+          total={status?.run.total ?? 0}
+          lines={status?.run.lines ?? []}
+          phaseLabel={(p) => t(`phase.${p}` as 'phase.preparing')}
+          hint={t('state.busyHint')}
+          bytesLabel={(u, tot, pct) =>
+            t('progress.bytes').replace('%a', u).replace('%b', tot).replace('%p', String(pct))}
+        />
       )}
     </div>
   );

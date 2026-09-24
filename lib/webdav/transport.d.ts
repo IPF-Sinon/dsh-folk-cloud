@@ -21,6 +21,8 @@ export interface WebdavRequestOptions {
     headers?: Record<string, string>;
     body?: Buffer;
     timeoutMs?: number;
+    /** 上传进度回调（已交给 socket 的字节数）。仅 PUT 大包时有意义。 */
+    onUploadProgress?: (sent: number) => void;
 }
 /** 可注入的请求实现（测试用；默认走 node:http/https 流式请求）。 */
 export type WebdavRequestFn = (method: string, url: string, options: WebdavRequestOptions, auth: string | null) => Promise<WebdavResponse>;
@@ -79,8 +81,8 @@ export declare class WebdavTransport {
     ensureDir(dir: string): Promise<void>;
     /** 读一个文件；404 返回 null（调用方区分「没有」与「坏了」）。 */
     get(file: string): Promise<Buffer | null>;
-    /** 覆盖式写入一个文件。 */
-    put(file: string, body: Buffer, contentType?: string): Promise<void>;
+    /** 覆盖式写入一个文件。[onProgress] 报已发送字节数（大包上传进度条用）。 */
+    put(file: string, body: Buffer, contentType?: string, onProgress?: (sent: number) => void): Promise<void>;
     /** 删文件；404 视为已删（幂等）。 */
     delete(file: string): Promise<void>;
     /** 探活：能成功列出远端根目录就算通。 */

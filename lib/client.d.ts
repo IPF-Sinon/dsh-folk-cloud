@@ -37,7 +37,10 @@ declare const zh: {
   readonly 'field.sessions': "包含会话记录";
   readonly 'field.sessions.desc': "对话历史会显著增大包体积，默认不含。";
   readonly 'field.encrypt': "加密备份包";
-  readonly 'field.encrypt.desc': "含 vault 的档位必须开启；口令在「立即执行」时填写。";
+  readonly 'field.encrypt.desc': "含 vault 的档位必须开启。加密口令在下方填写并保存，定时/启动后的自动备份也用它。";
+  readonly 'field.encryptPassword': "备份加密口令";
+  readonly 'field.encryptPassword.keep': "留空 = 保持已保存的加密口令";
+  readonly 'field.encryptPassword.needed': "已开启加密但未设加密口令：请在此填写并保存，否则备份会失败（绝不会静默产出未加密的包）。";
   readonly 'trigger.label': "触发方式";
   readonly 'trigger.interval': "定时间隔（分钟）";
   readonly 'trigger.interval.hint': "0 = 关闭定时触发";

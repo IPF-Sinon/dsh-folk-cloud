@@ -12,6 +12,8 @@ export interface CloudStatus {
   url: string;
   username: string;
   passwordConfigured: boolean;
+  /** 备份加密口令是否已存（与 WebDAV 口令分开一份）。 */
+  encryptPasswordConfigured: boolean;
   remoteDir: string;
   /** 用户设置的档位。 */
   tier: string;
@@ -54,7 +56,7 @@ export interface SyncReport {
   lines: string[];
 }
 
-/** 保存配置的载荷（password 留空 = 保持原密码）。 */
+/** 保存配置的载荷（password / encryptPassword 留空 = 保持已存的）。 */
 export interface CloudConfigDraft {
   url: string;
   username: string;
@@ -63,6 +65,8 @@ export interface CloudConfigDraft {
   tier: string;
   includeSessions: boolean;
   encrypt: boolean;
+  /** 备份加密口令；留空/缺席 = 不改已存的。 */
+  encryptPassword?: string;
   trigger: { intervalMinutes: number; onStartup: boolean };
 }
 

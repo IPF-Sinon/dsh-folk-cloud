@@ -78,6 +78,7 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
   const [url, setUrl] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [encryptPassword, setEncryptPassword] = useState('');
   const [remoteDir, setRemoteDir] = useState('dsh-folk');
   const [tier, setTier] = useState<string>('app-dsh');
   const [includeSessions, setIncludeSessions] = useState(false);
@@ -132,9 +133,12 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
         tier,
         includeSessions,
         encrypt,
+        // 加密口令同理：留空 = 保持已存的
+        ...(encryptPassword === '' ? {} : { encryptPassword }),
         trigger: { intervalMinutes, onStartup },
       });
       setPassword('');
+      setEncryptPassword('');
       setNote(t('state.saved'));
       await refresh();
     });
@@ -209,11 +213,11 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
           <span style={label}>{t('tier.label')}</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
             {TIERS.map((id) => (
-              <label key={id} style={{ ...row, gap: 6, cursor: 'pointer' }}>
+              <label key={id} style={{ ...row, gap: 6, alignItems: 'flex-start', cursor: 'pointer' }}>
                 <input type="radio" checked={tier === id} onChange={() => setTier(id)} />
-                <span>
-                  {t(`tier.${id}` as 'tier.dsh-only')}
-                  <span style={muted}> — {t(`tier.${id}.desc` as 'tier.dsh-only.desc')}</span>
+                <span style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span>{t(`tier.${id}` as 'tier.dsh-only')}：</span>
+                  <span style={muted}>{t(`tier.${id}.desc` as 'tier.dsh-only.desc')}</span>
                 </span>
               </label>
             ))}
@@ -241,6 +245,19 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
             <span style={muted}> — {t('field.encrypt.desc')}</span>
           </span>
         </label>
+        <div style={row}>
+          <span style={label}>{t('field.encryptPassword')}</span>
+          <input
+            style={input}
+            type="password"
+            value={encryptPassword}
+            placeholder={`${status?.encryptPasswordConfigured ? t('state.passwordSet') : t('state.passwordUnset')} · ${t('field.encryptPassword.keep')}`}
+            onChange={(e) => setEncryptPassword(e.target.value)}
+          />
+        </div>
+        {encrypt && status?.encryptPasswordConfigured === false && (
+          <div style={{ ...muted, color: '#c96' }}>{t('field.encryptPassword.needed')}</div>
+        )}
 
         <div style={{ fontWeight: 600, marginTop: 4 }}>{t('trigger.label')}</div>
         <div style={row}>

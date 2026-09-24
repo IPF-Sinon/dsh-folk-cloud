@@ -64,6 +64,20 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
   const determinate = total > 0 && phase === 'uploading';
   const percent = determinate ? Math.min(100, Math.round((uploaded / total) * 100)) : 0;
 
+  // 自成一套配色，别依赖 DSH 主题变量：实测 dsh 客户端并不暴露 --dsh-bg/--dsh-fg 之类，
+  // 之前那份 `var(--dsh-bg,#1e1e1e)` 永远落到深色兜底，浅色主题用户就被黑底黑字坑了。
+  // 这里按系统深/浅色成对给「底色 + 文字色」，保证任何主题下都读得清。
+  const dark =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const surface = dark ? '#1e1e1e' : '#ffffff';
+  const fg = dark ? '#f0f0f0' : '#1a1a1a';
+  const border = dark ? '#3a3a3a' : '#d9d9d9';
+  const track = dark ? '#3a3a3a' : '#e4e4e7';
+  const logBg = dark ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.05)';
+  const primary = '#3b82f6';
+
   const logRef = useRef<HTMLPreElement | null>(null);
   useEffect(() => {
     // 新日志进来自动滚到底
@@ -95,8 +109,9 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
           gap: 14,
           padding: 20,
           borderRadius: 14,
-          border: '1px solid var(--dsh-border, #3a3a3a)',
-          background: 'var(--dsh-bg, #1e1e1e)',
+          border: `1px solid ${border}`,
+          background: surface,
+          color: fg,
           boxShadow: '0 16px 48px rgba(0,0,0,0.55)',
           animation: 'dfc-pop 0.2s ease-out',
         }}
@@ -108,7 +123,7 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
               width: 16,
               height: 16,
               borderRadius: '50%',
-              border: '2px solid var(--dsh-primary, #6aa1ff)',
+              border: `2px solid ${primary}`,
               borderTopColor: 'transparent',
               display: 'inline-block',
               animation: 'dfc-spin 0.8s linear infinite',
@@ -129,7 +144,7 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
                   style={{
                     height: 4,
                     borderRadius: 2,
-                    background: done || active ? 'var(--dsh-primary, #6aa1ff)' : 'var(--dsh-border, #3a3a3a)',
+                    background: done || active ? primary : track,
                     opacity: done ? 0.6 : 1,
                     transition: 'background 0.3s',
                   }}
@@ -150,7 +165,7 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
         </div>
 
         {/* 进度条：上传阶段有 total 就画确定进度，否则来回滑动的不确定条 */}
-        <div style={{ position: 'relative', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--dsh-border, #3a3a3a)' }}>
+        <div style={{ position: 'relative', height: 8, borderRadius: 4, overflow: 'hidden', background: track }}>
           {determinate ? (
             <div
               style={{
@@ -159,7 +174,7 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
                 top: 0,
                 bottom: 0,
                 width: `${percent}%`,
-                background: 'var(--dsh-primary, #6aa1ff)',
+                background: primary,
                 borderRadius: 4,
                 transition: 'width 0.2s ease-out',
               }}
@@ -171,7 +186,7 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
                 top: 0,
                 bottom: 0,
                 width: '40%',
-                background: 'var(--dsh-primary, #6aa1ff)',
+                background: primary,
                 borderRadius: 4,
                 animation: 'dfc-indeterminate 1.1s ease-in-out infinite',
               }}
@@ -194,9 +209,9 @@ export function SyncOverlay(props: SyncOverlayProps): JSX.Element {
               overflow: 'auto',
               fontSize: 11,
               lineHeight: 1.5,
-              opacity: 0.8,
+              opacity: 0.85,
               whiteSpace: 'pre-wrap',
-              background: 'rgba(0,0,0,0.25)',
+              background: logBg,
               borderRadius: 8,
               padding: 10,
             }}

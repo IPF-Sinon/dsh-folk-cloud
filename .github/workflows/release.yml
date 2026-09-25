@@ -63,4 +63,7 @@ jobs:
               --title "$TAG" --notes "dsh-folk-cloud $TAG (stable tarball for DSH-Folk seed fallback)."
           fi
           gh release upload "$TAG" "$TGZ" --clobber
-          gh release view "$TAG" --json assets,isLatest,isPrerelease --jq '{isLatest, isPrerelease, assets: [.assets[].url]}'
+          # 只看真实存在的字段：GitHub 的 release JSON 已经没有 isLatest 了，带上它 gh 会直接
+          # 以 "Unknown JSON field: isLatest" 退出 1 —— 附件其实已经传上去了，却把整个发布标成失败。
+          # 正式/最新与否由 isDraft / isPrerelease 表达，足够守住「别把正式包发成预发布」。
+          gh release view "$TAG" --json assets,isDraft,isPrerelease --jq '{isDraft, isPrerelease, assets: [.assets[].url]}'

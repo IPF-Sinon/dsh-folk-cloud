@@ -34,6 +34,20 @@ const TIERS = [
   'app-dsh-vault',
 ] as const;
 
+/**
+ * 含**软件数据**的档位 —— 只有这些档位里才有外观主题，主题开关也只在这几档下显示与检测。
+ * 与宿主 App 的 scopeForTier（app-only / app-dsh / app-dsh-vault）保持同一口径。
+ */
+const TIERS_WITH_APP: readonly string[] = ['app-only', 'app-dsh', 'app-dsh-vault'];
+
+/** 字节数换成人类可读（与宿主日志里的写法一致，便于对照）。 */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const box: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -85,6 +99,14 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
   const [remoteDir, setRemoteDir] = useState('dsh-folk');
   const [tier, setTier] = useState<string>('app-dsh');
   const [includeSessions, setIncludeSessions] = useState(false);
+  /**
+   * 是否把外观主题打进包。**undefined = 自动**（按宿主报的主题包大小定，超过 5MB 就不含）。
+   * 只有用户拨过开关才会有值，这样换主题后默认值能一直跟上。
+   */
+  const [includeTheme, setIncludeTheme] = useState<boolean | undefined>(undefined);
+  /** 宿主 App 量出来的主题包信息；null = 还没拿到（检测中或桥不可用）。 */
+  const [themeSize, setThemeSize] = useState<{ sizeBytes: number; limitBytes: number; defaultInclude: boolean } | null>(null);
+  const [themeChecking, setThemeChecking] = useState(false);
   const [encrypt, setEncrypt] = useState(true);
   const [intervalMinutes, setIntervalMinutes] = useState(60);
   const [onStartup, setOnStartup] = useState(true);
@@ -98,6 +120,7 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
       setRemoteDir(s.remoteDir);
       setTier(s.tier);
       setIncludeSessions(s.includeSessions);
+      setIncludeTheme(s.includeTheme);
       setEncrypt(s.encrypt);
       setIntervalMinutes(s.trigger.intervalMinutes);
       setOnStartup(s.trigger.onStartup);
@@ -120,6 +143,29 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /**
+   * 主题包大小只在「档位含软件数据 + App 补包接口可用」时检测 —— 与开关的显示条件完全一致。
+   *
+   * 默认档位（app-dsh）就含软件数据，所以进页面就会检测一次并按大小定出默认值（需求里那句
+   * 「默认配置时也检测一遍进行自动选择」）；换成不含软件数据的档位就不检测、也不显示。
+   * 失败（桥不可用/老版本 App）保持 null，界面按「含主题」处理，不替用户把主题排除掉。
+   */
+  useEffect(() => {
+    const needsApp = TIERS_WITH_APP.includes(tier) && status?.appBridgeAvailable === true;
+    if (!needsApp || themeSize !== null || themeChecking) return;
+    let cancelled = false;
+    setThemeChecking(true);
+    void (async () => {
+      const info = await api.themeInfo();
+      if (cancelled) return;
+      setThemeSize(info === null ? null : { sizeBytes: info.sizeBytes, limitBytes: info.limitBytes, defaultInclude: info.defaultInclude });
+      setThemeChecking(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, tier, status?.appBridgeAvailable, themeSize, themeChecking]);
 
   // 常驻轮询：每 1.5s 只刷 status。这样自动/后台/手动触发的进度、日志、历史都能实时跟随，
   // 用户即便不点任何东西、或刷新页面重进，也能看到「正在同步」而不是一片空白。
@@ -156,6 +202,8 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
         remoteDir,
         tier,
         includeSessions,
+        // 缺席 = 继续自动（不把自动结果固化成用户选择）
+        ...(includeTheme === undefined ? {} : { includeTheme }),
         encrypt,
         // 加密口令同理：留空 = 保持已存的
         ...(encryptPassword === '' ? {} : { encryptPassword }),
@@ -270,6 +318,37 @@ export function CloudSection(props: CloudSectionProps): JSX.Element {
           </div>
         )}
         <div style={muted}>{status?.appBridgeAvailable ? t('state.appBridgeOk') : t('state.appBridgeMissing')}</div>
+
+        {/* 外观主题开关：只在与上面档位同一条件下显示（含软件数据 + 补包接口可用）。
+            勾选状态 = 用户显式选择 ?? 宿主按大小给的推荐值；未拨过时在标题后标注「自动」。 */}
+        {TIERS_WITH_APP.includes(tier) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label style={{ ...row, gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={includeTheme ?? themeSize?.defaultInclude ?? true}
+                onChange={(e) => setIncludeTheme(e.target.checked)}
+              />
+              <span>
+                {t('field.theme')}
+                {includeTheme === undefined && <span style={muted}>（{t('state.themeAuto')}）</span>}
+                <span style={muted}> — {t('field.theme.desc')}</span>
+              </span>
+            </label>
+            <div style={muted}>
+              {themeChecking
+                ? t('state.themeChecking')
+                : themeSize === null
+                  ? t('state.themeUnknown')
+                  : t('state.themeSize')
+                      .replace('%s', formatBytes(themeSize.sizeBytes))
+                      .replace('%l', formatBytes(themeSize.limitBytes))}
+            </div>
+            {themeSize !== null && !themeSize.defaultInclude && (includeTheme ?? themeSize.defaultInclude) && (
+              <div style={{ ...muted, color: '#c96' }}>{t('state.themeTooBig')}</div>
+            )}
+          </div>
+        )}
 
         <label style={{ ...row, gap: 6 }}>
           <input type="checkbox" checked={includeSessions} onChange={(e) => setIncludeSessions(e.target.checked)} />

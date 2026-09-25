@@ -74,6 +74,12 @@ export interface BackupProducer {
 
 export interface ProduceOptions {
   includeSessions: boolean;
+  /**
+   * 是否把外观主题打进包。
+   *
+   * `undefined` = 自动（由产出方按宿主 App 报的主题包大小决定）；`false` = 用户明确不要主题。
+   */
+  includeTheme?: boolean;
   /** 加密口令；`encrypt=false` 时为 undefined。 */
   password?: string;
   onLine?: (line: string) => void;
@@ -196,6 +202,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncResult> {
     deps.onProgress?.({ phase: 'producing' });
     produced = await producer.produce(workDir, config.tier, {
       includeSessions: config.includeSessions,
+      ...(config.includeTheme === undefined ? {} : { includeTheme: config.includeTheme }),
       ...(config.encrypt && deps.password !== undefined ? { password: deps.password } : {}),
       ...(deps.onLine === undefined ? {} : { onLine: deps.onLine }),
     });

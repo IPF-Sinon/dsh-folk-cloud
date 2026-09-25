@@ -14,6 +14,25 @@ interface BridgeConfig {
 export declare function readBridgeConfig(): Promise<BridgeConfig | null>;
 /** 宿主 App 的补包接口是否可用。 */
 export declare function appBridgeAvailable(): Promise<boolean>;
+/** 主题包信息（宿主 App 量出来的真数）。量不出来返回 null。 */
+export interface ThemeInfo {
+    exists: boolean;
+    sizeBytes: number;
+    limitBytes: number;
+    /** 宿主给的推荐默认值：超过 limit 就是 false。 */
+    defaultInclude: boolean;
+}
+/**
+ * 问宿主 App「当前外观主题打进包有多大」。
+ *
+ * 云备份面板的「是否包括应用主题」开关要按这个数字给默认值（超过 5MB 默认不含，
+ * 免得同步包被字体/音乐/视频背景顶爆）。App 那边是真打一遍主题包量出来的（不落盘），
+ * 所以这里别在页面渲染里高频调用 —— 面板只在打开时问一次，导出时若仍是自动模式再问一次。
+ *
+ * 拿不到（桥不可用 / 老版本 App 没这个端点）返回 null，调用方按「含主题」处理：
+ * 不能因为量不出来就把用户的主题悄悄排除在备份之外。
+ */
+export declare function themeInfo(force?: boolean): Promise<ThemeInfo | null>;
 /** dsh-config-manager 是否在（本插件的硬依赖）。 */
 export declare function configManagerAvailable(): Promise<boolean>;
 /**

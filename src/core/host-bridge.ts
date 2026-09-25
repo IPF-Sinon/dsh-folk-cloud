@@ -150,6 +150,50 @@ export async function appBridgeAvailable(): Promise<boolean> {
   }
 }
 
+/** 主题包信息（宿主 App 量出来的真数）。量不出来返回 null。 */
+export interface ThemeInfo {
+  exists: boolean;
+  sizeBytes: number;
+  limitBytes: number;
+  /** 宿主给的推荐默认值：超过 limit 就是 false。 */
+  defaultInclude: boolean;
+}
+
+/**
+ * 问宿主 App「当前外观主题打进包有多大」。
+ *
+ * 云备份面板的「是否包括应用主题」开关要按这个数字给默认值（超过 5MB 默认不含，
+ * 免得同步包被字体/音乐/视频背景顶爆）。App 那边是真打一遍主题包量出来的（不落盘），
+ * 所以这里别在页面渲染里高频调用 —— 面板只在打开时问一次，导出时若仍是自动模式再问一次。
+ *
+ * 拿不到（桥不可用 / 老版本 App 没这个端点）返回 null，调用方按「含主题」处理：
+ * 不能因为量不出来就把用户的主题悄悄排除在备份之外。
+ */
+export async function themeInfo(force = false): Promise<ThemeInfo | null> {
+  const bridge = await readBridgeConfig();
+  if (bridge === null) return null;
+  try {
+    const suffix = force ? '?force=1' : '';
+    const res = await request(bridge.port, 'GET', `${APP_CLOUD_PREFIX}/theme${suffix}`, {
+      token: bridge.token,
+      timeoutMs: APP_TIMEOUT_MS,
+    });
+    if (res.status !== 200) return null;
+    const parsed = parseJson(res.body);
+    if (parsed === null || typeof parsed['sizeBytes'] !== 'number') return null;
+    const size = parsed['sizeBytes'];
+    const limit = typeof parsed['limitBytes'] === 'number' ? (parsed['limitBytes'] as number) : 5 * 1024 * 1024;
+    return {
+      exists: parsed['exists'] === true,
+      sizeBytes: size,
+      limitBytes: limit,
+      defaultInclude: typeof parsed['defaultInclude'] === 'boolean' ? (parsed['defaultInclude'] as boolean) : size <= limit,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** dsh-config-manager 是否在（本插件的硬依赖）。 */
 export async function configManagerAvailable(): Promise<boolean> {
   try {
@@ -185,10 +229,24 @@ export class HostBackupProducer implements BackupProducer {
     const bridge = await readBridgeConfig();
     if (bridge === null) throw new Error('宿主 App 回环桥配置缺失');
     options.onLine?.('请宿主 App 产出整包（含软件数据与外观）…');
+    // 「自动」在这里落地：配置里没显式选过就现问 App 主题包多大，按它的建议决定含不含主题。
+    // 放在这里而不是只放在界面上，是为了让定时同步（没人打开面板）也走同一套判断。
+    let includeTheme = options.includeTheme;
+    if (includeTheme === undefined) {
+      const info = await themeInfo();
+      if (info !== null) {
+        includeTheme = info.defaultInclude;
+        options.onLine?.(
+          `外观主题 ${formatBytes(info.sizeBytes)}（上限 ${formatBytes(info.limitBytes)}）：` +
+            `${includeTheme ? '随包备份' : '过大，本次不含主题'}`,
+        );
+      }
+    }
     const body = Buffer.from(
       JSON.stringify({
         tier,
         includeSessions: options.includeSessions,
+        ...(includeTheme === undefined ? {} : { includeTheme }),
         encrypt: options.password !== undefined,
         password: options.password ?? '',
         outDir,
@@ -281,4 +339,12 @@ function parseJson(body: Buffer): Record<string, unknown> | null {
 /** 远端目录里的包文件名 → 本地临时文件路径。 */
 export function localFilePath(workDir: string, remoteFile: string): string {
   return path.join(workDir, path.basename(remoteFile));
+}
+
+/** 人类可读的字节数（日志里说明主题包多大用）。 */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '未知大小';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

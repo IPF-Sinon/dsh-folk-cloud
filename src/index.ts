@@ -53,6 +53,7 @@ import {
   HostBackupRestorer,
   appBridgeAvailable,
   configManagerAvailable,
+  themeInfo,
 } from './core/host-bridge.ts';
 import { deleteCommit, resolveConflict, restoreCommit, runSync, type SyncReport } from './core/sync-engine.ts';
 import { readRemoteManifest } from './core/store.ts';
@@ -67,6 +68,7 @@ export const inject = ['settings', 'credentials'];
 /** 路由前缀。 */
 const API = {
   status: '/api/dsh-folk-cloud/status',
+  theme: '/api/dsh-folk-cloud/theme',
   config: '/api/dsh-folk-cloud/config',
   test: '/api/dsh-folk-cloud/test',
   trigger: '/api/dsh-folk-cloud/trigger',
@@ -293,6 +295,7 @@ class CloudRuntime {
       effectiveTier,
       tierFellBack: effectiveTier !== cfg.tier,
       includeSessions: cfg.includeSessions,
+      ...(cfg.includeTheme === undefined ? {} : { includeTheme: cfg.includeTheme }),
       encrypt: cfg.encrypt,
       trigger: cfg.trigger,
       appBridgeAvailable: appAvailable,
@@ -639,6 +642,25 @@ export function makeRoutes(runtime: CloudRuntime): WebRoute[] {
     },
     {
       kind: 'exact',
+      path: API.theme,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return;
+        // 代客户端问宿主 App：主题包多大（客户端够不到 App 的回环桥）。
+        // 桥不可用/老版本 App 没这个端点 → 回 {available:false}，界面按「含主题」处理。
+        try {
+          const info = await themeInfo(new URL(req.url ?? '/', 'http://localhost').searchParams.get('force') === '1');
+          if (info === null) {
+            writeJson(res, 200, { available: false });
+            return;
+          }
+          writeJson(res, 200, { available: true, ...info });
+        } catch (error) {
+          writeJson(res, 500, { error: describe(error) });
+        }
+      },
+    },
+    {
+      kind: 'exact',
       path: API.config,
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return;
@@ -657,6 +679,7 @@ export function makeRoutes(runtime: CloudRuntime): WebRoute[] {
             remoteDir: saved.remoteDir,
             tier: saved.tier,
             includeSessions: saved.includeSessions,
+            ...(saved.includeTheme === undefined ? {} : { includeTheme: saved.includeTheme }),
             encrypt: saved.encrypt,
             trigger: saved.trigger,
             passwordConfigured: await runtime.passwordConfigured(),

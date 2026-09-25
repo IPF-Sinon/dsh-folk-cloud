@@ -34,6 +34,8 @@ declare const zh: {
   readonly 'tier.app-dsh.desc': "两边都带。这是 App 里「备份」的默认档位。";
   readonly 'tier.app-dsh-vault': "软件数据 + DSH 数据（含 vault）";
   readonly 'tier.app-dsh-vault.desc': "最全的一档，含凭据原文。必须加密。";
+  readonly 'field.theme': "包含应用主题";
+  readonly 'field.theme.desc': "把外观（背景/字体/音乐/音效/导航图标）一起备份，主题包大了会明显拖慢同步。";
   readonly 'field.sessions': "包含会话记录";
   readonly 'field.sessions.desc': "对话历史会显著增大包体积，默认不含。";
   readonly 'field.encrypt': "加密备份包";
@@ -74,6 +76,11 @@ declare const zh: {
   readonly 'state.passwordUnset': "未配置";
   readonly 'state.neverSynced': "从未同步";
   readonly 'state.lastSync': "上次同步";
+  readonly 'state.themeAuto': "自动";
+  readonly 'state.themeChecking': "正在检测主题包大小…";
+  readonly 'state.themeSize': "当前主题包大小：%s（上限 %l，超过则默认不含）";
+  readonly 'state.themeUnknown': "检测不到主题包大小（宿主 App 或补包接口不可用），本次按「包含主题」处理。";
+  readonly 'state.themeTooBig': "主题包超过上限，已默认不包含；确实需要可以手动勾上。";
   readonly 'state.appBridgeOk': "宿主 App 软件数据接口：可用";
   readonly 'state.appBridgeMissing': "宿主 App 软件数据接口：不可用（含软件数据的档位会自动回退）";
   readonly 'state.managerMissing': "未检测到 dsh-config-manager：DSH 数据无法备份/恢复，请先安装并启用它。";

@@ -66,6 +66,15 @@ export interface CloudConfig {
     tier: BackupTier;
     /** 导出时是否带上会话分区（会显著变大）。 */
     includeSessions: boolean;
+    /**
+     * 含软件数据的档位里，是否把**外观主题**也打进包。
+     *
+     * `undefined` = **自动**：用之前现问宿主 App（`/cloud/appdata/theme`），超过 5MB 就不含 ——
+     * 主题包可能被自定义字体/音乐/视频背景撑到几十 MB，默认含它会把同步包直接顶爆。
+     * 存下来的只有用户**显式拨过开关**的那一次选择；没拨过就一直保持自动，
+     * 于是换了主题之后默认值会跟着变（这正是「默认配置时也检测一遍」想要的）。
+     */
+    includeTheme?: boolean;
     /** 是否加密导出包。 */
     encrypt: boolean;
     /** 本次是否提供了新的**加密口令**；`undefined` = 保持已存的不变。**永不来自文件读取**。 */

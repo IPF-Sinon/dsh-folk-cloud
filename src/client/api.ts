@@ -21,6 +21,11 @@ export interface CloudStatus {
   effectiveTier: string;
   tierFellBack: boolean;
   includeSessions: boolean;
+  /**
+   * 是否把外观主题打进包。**缺席 = 自动**：由宿主 App 报的主题包大小决定（超过 5MB 不含）。
+   * 只有用户显式拨过开关才会有值 —— 这样换主题之后默认值能一直跟上。
+   */
+  includeTheme?: boolean;
   encrypt: boolean;
   trigger: { intervalMinutes: number; onStartup: boolean; manual: boolean };
   appBridgeAvailable: boolean;
@@ -75,6 +80,8 @@ export interface CloudConfigDraft {
   remoteDir: string;
   tier: string;
   includeSessions: boolean;
+  /** 缺席 = 保持「自动」；true/false = 用户显式选择。 */
+  includeTheme?: boolean;
   encrypt: boolean;
   /** 备份加密口令；留空/缺席 = 不改已存的。 */
   encryptPassword?: string;
@@ -100,7 +107,33 @@ async function readJson<T>(res: Response): Promise<T> {
   return parsed as T;
 }
 
+/** 宿主 App 报的主题包信息；桥不可用/老版本 App 时为 null。 */
+export interface ThemeInfo {
+  exists: boolean;
+  sizeBytes: number;
+  limitBytes: number;
+  /** 宿主给的推荐默认值（超过上限就是 false）。 */
+  defaultInclude: boolean;
+}
+
 export class CloudApi {
+  /**
+   * 问「当前外观主题打进包有多大」。
+   *
+   * 走插件自己的 `/theme` 路由（客户端够不到宿主 App 的回环桥，只能由插件代问）。
+   * 拿不到就返回 null，界面按「含主题」处理。
+   */
+  async themeInfo(force = false): Promise<ThemeInfo | null> {
+    const res = await fetch(`/api/dsh-folk-cloud/theme${force ? '?force=1' : ''}`);
+    if (!res.ok) return null;
+    try {
+      const parsed = (await res.json()) as ThemeInfo & { available?: boolean };
+      return typeof parsed.sizeBytes === 'number' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
   async status(): Promise<CloudStatus> {
     return readJson<CloudStatus>(await fetch('/api/dsh-folk-cloud/status'));
   }

@@ -1,6 +1,6 @@
 {
   "name": "dsh-folk-cloud",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "GPL-3.0",
   "description": "WebDAV cloud backup/restore for DSH-Folk: periodically syncs a full backup archive (DSH config plus, when the host app provides it, Android app settings and appearance) to a WebDAV server, with hash-based dedup and manual conflict resolution. Depends on dsh-config-manager for the DSH-side export/import engine. DSH-Folk 的 WebDAV 云备份插件。",
   "keywords": [
@@ -63,15 +63,15 @@
   },
   "peerDependencies": {
     "dsh-config-manager": "^0.1.56",
-    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-home-paths": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-home-paths": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6 || ^0.2.0-rc.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
